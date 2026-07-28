@@ -1,0 +1,109 @@
+use std::fmt::{Display, Formatter};
+use windows::core::Error as WindowsError;
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+    COINIT_APARTMENTTHREADED,
+};
+use windows::Win32::UI::Accessibility::{
+    CUIAutomation, IUIAutomation, IUIAutomationTextPattern, IUIAutomationTextPattern2,
+    UIA_TextPattern2Id, UIA_TextPatternId,
+};
+
+#[derive(Debug)]
+pub enum SelectionError {
+    Unsupported,
+    Windows(WindowsError),
+}
+
+impl Display for SelectionError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unsupported => formatter.write_str("当前应用不支持直接读取选中文本"),
+            Self::Windows(error) => write!(formatter, "Windows UI Automation 错误：{error}"),
+        }
+    }
+}
+
+impl std::error::Error for SelectionError {}
+
+impl From<WindowsError> for SelectionError {
+    fn from(value: WindowsError) -> Self {
+        Self::Windows(value)
+    }
+}
+
+struct ComGuard;
+
+impl ComGuard {
+    fn initialize() -> Result<Self, SelectionError> {
+        unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()? };
+        Ok(Self)
+    }
+}
+
+impl Drop for ComGuard {
+    fn drop(&mut self) {
+        unsafe { CoUninitialize() };
+    }
+}
+
+pub fn read_selected_text() -> Result<Option<String>, SelectionError> {
+    let _com = ComGuard::initialize()?;
+    let automation: IUIAutomation =
+        unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }?;
+    let element = unsafe { automation.GetFocusedElement() }?;
+
+    let texts = if let Ok(pattern) =
+        unsafe { element.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId) }
+    {
+        selected_ranges(&pattern)?
+    } else if let Ok(pattern) =
+        unsafe { element.GetCurrentPatternAs::<IUIAutomationTextPattern2>(UIA_TextPattern2Id) }
+    {
+        selected_ranges(&pattern)?
+    } else {
+        return Err(SelectionError::Unsupported);
+    };
+
+    Ok(combine_selected_ranges(texts))
+}
+
+fn selected_ranges(pattern: &IUIAutomationTextPattern) -> Result<Vec<String>, SelectionError> {
+    let ranges = unsafe { pattern.GetSelection() }?;
+    let length = unsafe { ranges.Length() }?;
+    let mut texts = Vec::with_capacity(length.max(0) as usize);
+    for index in 0..length {
+        let range = unsafe { ranges.GetElement(index) }?;
+        let text = unsafe { range.GetText(-1) }?.to_string();
+        texts.push(text);
+    }
+    Ok(texts)
+}
+
+fn combine_selected_ranges(texts: Vec<String>) -> Option<String> {
+    let text = texts
+        .into_iter()
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!text.trim().is_empty()).then_some(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn combines_multiple_nonempty_selection_ranges() {
+        assert_eq!(
+            combine_selected_ranges(vec!["第一段".into(), String::new(), "第二段".into()]),
+            Some("第一段\n第二段".into())
+        );
+    }
+
+    #[test]
+    fn rejects_empty_or_whitespace_only_selection() {
+        assert_eq!(combine_selected_ranges(vec![]), None);
+        assert_eq!(combine_selected_ranges(vec!["  \r\n".into()]), None);
+    }
+}

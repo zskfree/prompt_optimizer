@@ -1,0 +1,5 @@
+/target/
+/dist/
+/config.json
+/config.invalid-*.json
+/*.log

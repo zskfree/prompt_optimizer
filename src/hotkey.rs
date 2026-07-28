@@ -1,0 +1,198 @@
+use std::collections::HashSet;
+use std::fmt::{Display, Formatter};
+
+pub const MOD_ALT_VALUE: u32 = 0x0001;
+pub const MOD_CONTROL_VALUE: u32 = 0x0002;
+pub const MOD_SHIFT_VALUE: u32 = 0x0004;
+pub const MOD_WIN_VALUE: u32 = 0x0008;
+pub const MOD_NOREPEAT_VALUE: u32 = 0x4000;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HotkeyKind {
+    Chord { modifiers: u32, virtual_key: u32 },
+    CtrlMultiTapA { taps: u8 },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HotkeySpec {
+    pub kind: HotkeyKind,
+    pub display: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct HotkeyError(pub String);
+
+impl Display for HotkeyError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for HotkeyError {}
+
+pub fn parse_hotkey(value: &str) -> Result<HotkeySpec, HotkeyError> {
+    let compact = value
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    match compact.as_str() {
+        "CTRL+DOUBLEA" => {
+            return Ok(HotkeySpec {
+                kind: HotkeyKind::CtrlMultiTapA { taps: 2 },
+                display: "Ctrl + 双击 A".into(),
+            });
+        }
+        "CTRL+TRIPLEA" => {
+            return Ok(HotkeySpec {
+                kind: HotkeyKind::CtrlMultiTapA { taps: 3 },
+                display: "Ctrl + 三击 A".into(),
+            });
+        }
+        _ => {}
+    }
+
+    let tokens: Vec<String> = value
+        .split('+')
+        .map(|part| part.trim().to_ascii_uppercase())
+        .filter(|part| !part.is_empty())
+        .collect();
+    if tokens.is_empty() {
+        return Err(HotkeyError("热键不能为空".into()));
+    }
+
+    let mut seen = HashSet::new();
+    let mut modifiers = MOD_NOREPEAT_VALUE;
+    let mut main_key: Option<(u32, String)> = None;
+
+    for token in tokens {
+        if !seen.insert(token.clone()) {
+            return Err(HotkeyError(format!("热键包含重复按键：{token}")));
+        }
+        match token.as_str() {
+            "CTRL" | "CONTROL" => modifiers |= MOD_CONTROL_VALUE,
+            "ALT" => modifiers |= MOD_ALT_VALUE,
+            "SHIFT" => modifiers |= MOD_SHIFT_VALUE,
+            "WIN" | "WINDOWS" => modifiers |= MOD_WIN_VALUE,
+            _ => {
+                if main_key.is_some() {
+                    return Err(HotkeyError("热键只能包含一个主键".into()));
+                }
+                main_key = Some(parse_main_key(&token)?);
+            }
+        }
+    }
+
+    if modifiers == MOD_NOREPEAT_VALUE {
+        return Err(HotkeyError("热键至少需要一个修饰键".into()));
+    }
+    let (virtual_key, main_display) = main_key.ok_or_else(|| HotkeyError("热键缺少主键".into()))?;
+
+    let mut display = Vec::new();
+    if modifiers & MOD_CONTROL_VALUE != 0 {
+        display.push("Ctrl".to_string());
+    }
+    if modifiers & MOD_ALT_VALUE != 0 {
+        display.push("Alt".to_string());
+    }
+    if modifiers & MOD_SHIFT_VALUE != 0 {
+        display.push("Shift".to_string());
+    }
+    if modifiers & MOD_WIN_VALUE != 0 {
+        display.push("Win".to_string());
+    }
+    display.push(main_display);
+
+    Ok(HotkeySpec {
+        kind: HotkeyKind::Chord {
+            modifiers,
+            virtual_key,
+        },
+        display: display.join("+"),
+    })
+}
+
+fn parse_main_key(token: &str) -> Result<(u32, String), HotkeyError> {
+    let bytes = token.as_bytes();
+    if bytes.len() == 1 && (bytes[0].is_ascii_uppercase() || bytes[0].is_ascii_digit()) {
+        return Ok((bytes[0] as u32, token.into()));
+    }
+    if let Some(number) = token
+        .strip_prefix('F')
+        .and_then(|part| part.parse::<u32>().ok())
+    {
+        if number == 12 {
+            return Err(HotkeyError("F12 是系统调试器保留键".into()));
+        }
+        if (1..=24).contains(&number) {
+            return Ok((0x70 + number - 1, format!("F{number}")));
+        }
+    }
+    Err(HotkeyError(format!("不支持的主键：{token}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_and_normalizes_hotkeys() {
+        let parsed = parse_hotkey(" shift + ctrl + o ").unwrap();
+        assert_eq!(parsed.display, "Ctrl+Shift+O");
+        assert_eq!(
+            parsed.kind,
+            HotkeyKind::Chord {
+                modifiers: MOD_NOREPEAT_VALUE | MOD_CONTROL_VALUE | MOD_SHIFT_VALUE,
+                virtual_key: b'O' as u32,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_ctrl_multi_tap_a_gestures() {
+        assert_eq!(
+            parse_hotkey(" Ctrl + TripleA ").unwrap(),
+            HotkeySpec {
+                kind: HotkeyKind::CtrlMultiTapA { taps: 3 },
+                display: "Ctrl + 三击 A".into(),
+            }
+        );
+        assert_eq!(
+            parse_hotkey("ctrl+doublea").unwrap().kind,
+            HotkeyKind::CtrlMultiTapA { taps: 2 }
+        );
+    }
+
+    #[test]
+    fn supports_function_and_digit_keys() {
+        assert_eq!(
+            parse_hotkey("Alt+F24").unwrap().kind,
+            HotkeyKind::Chord {
+                modifiers: MOD_NOREPEAT_VALUE | MOD_ALT_VALUE,
+                virtual_key: 0x87,
+            }
+        );
+        assert_eq!(
+            parse_hotkey("Win+1").unwrap().kind,
+            HotkeyKind::Chord {
+                modifiers: MOD_NOREPEAT_VALUE | MOD_WIN_VALUE,
+                virtual_key: b'1' as u32,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_combinations() {
+        for value in [
+            "O",
+            "Ctrl",
+            "Ctrl+O+P",
+            "Ctrl+Ctrl+O",
+            "Ctrl+F12",
+            "Ctrl+Space",
+            "Alt+TripleA",
+        ] {
+            assert!(parse_hotkey(value).is_err(), "{value} should be invalid");
+        }
+    }
+}
