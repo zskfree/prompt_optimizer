@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PromptOptimizer - 轻量、无主窗口的 Windows 提示词优化工具</title>
+    <meta name="description" content="选中文字，按住 Ctrl 快速三击 A，优化结果自动进入剪贴板。Windows 10/11 · Rust 2021 · OpenAI-compatible API · Portable" />
+
+    <!-- Google tag (gtag.js) - 独立可配置统计 -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-D8N8EL5FCK"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag() { dataLayer.push(arguments); }
+        gtag('js', new Date());
+        gtag('config', 'G-D8N8EL5FCK');
+    </script>
+    <!-- 不蒜子统计 -->
+    <script async src="https://busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+
+    <style>
+        :root {
+            /* 极简主义配色：克制的灰阶 + 墨色 */
+            --color-bg: #fafaf9;
+            --color-surface: #ffffff;
+            --color-text: #1a1a1a;
+            --color-text-muted: #737373;
+            --color-text-subtle: #a3a3a3;
+            --color-border: #e5e5e5;
+            --color-border-strong: #1a1a1a;
+            --color-accent: #1a1a1a;
+            --color-code-bg: #f4f4f3;
+
+            --space-xs: 8px;
+            --space-sm: 12px;
+            --space-md: 24px;
+            --space-lg: 48px;
+            --space-xl: 80px;
+
+            --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", serif;
+            --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+            --font-mono: "SF Mono", "JetBrains Mono", "Menlo", monospace;
+        }
+
+        [data-theme="dark"] {
+            --color-bg: #121212;
+            --color-surface: #1e1e1e;
+            --color-text: #e5e5e5;
+            --color-text-muted: #a3a3a3;
+            --color-text-subtle: #737373;
+            --color-border: #2e2e2e;
+            --color-border-strong: #e5e5e5;
+            --color-accent: #e5e5e5;
+            --color-code-bg: #1a1a1a;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html {
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            background-color: var(--color-bg);
+            color: var(--color-text);
+            font-family: var(--font-sans);
+            font-size: 15px;
+            line-height: 1.6;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 520px;
+            padding: var(--space-xl) var(--space-md);
+        }
+
+        /* 顶部标识栏 */
+        .brand {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            letter-spacing: 0.15em;
+            color: var(--color-text-subtle);
+            text-transform: uppercase;
+            margin-bottom: var(--space-lg);
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+        }
+
+        .brand-line {
+            flex: 1;
+            height: 1px;
+            background: var(--color-border);
+            transition: background 0.3s ease;
+        }
+
+        .brand-github {
+            color: var(--color-text);
+            display: flex;
+            transition: transform 0.2s ease, color 0.3s ease;
+            text-decoration: none;
+        }
+
+        .brand-github:hover {
+            color: var(--color-accent);
+            transform: scale(1.15);
+        }
+
+        .theme-toggle {
+            background: none;
+            border: none;
+            color: var(--color-text);
+            cursor: pointer;
+            display: flex;
+            padding: 0;
+            transition: transform 0.2s ease, color 0.2s ease;
+        }
+
+        .theme-toggle:hover {
+            color: var(--color-accent);
+            transform: scale(1.15);
+        }
+
+        .theme-toggle .icon-sun,
+        .theme-toggle .icon-moon {
+            display: none;
+        }
+
+        :root:not([data-theme="dark"]) .theme-toggle .icon-moon {
+            display: block;
+        }
+
+        [data-theme="dark"] .theme-toggle .icon-sun {
+            display: block;
+        }
+
+        /* 标题与引文标语 */
+        .hero {
+            margin-bottom: var(--space-lg);
+        }
+
+        .hero-title {
+            font-family: var(--font-sans);
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            margin: 0 0 var(--space-xs) 0;
+            color: var(--color-text);
+        }
+
+        .hero-tags {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--color-text-muted);
+            margin-bottom: var(--space-md);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px 12px;
+        }
+
+        .hero-tag {
+            background: var(--color-code-bg);
+            padding: 2px 8px;
+            border-radius: 3px;
+            border: 1px solid var(--color-border);
+        }
+
+        blockquote {
+            margin: 0;
+            padding: 0;
+            font-family: var(--font-serif);
+            font-size: 18px;
+            line-height: 1.8;
+            color: var(--color-text);
+            font-weight: 400;
+            position: relative;
+            transition: color 0.3s ease;
+        }
+
+        blockquote p {
+            margin: 0 0 var(--space-sm) 0;
+        }
+
+        blockquote cite {
+            display: block;
+            font-family: var(--font-sans);
+            font-size: 13px;
+            font-style: normal;
+            color: var(--color-text-muted);
+            letter-spacing: 0.02em;
+            transition: color 0.3s ease;
+        }
+
+        kbd {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            background: var(--color-code-bg);
+            border: 1px solid var(--color-border-strong);
+            border-radius: 3px;
+            padding: 1px 5px;
+            color: var(--color-text);
+            box-shadow: 0 1px 0 rgba(0,0,0,0.1);
+        }
+
+        /* 分隔线 */
+        .divider {
+            border: 0;
+            height: 1px;
+            background: var(--color-border);
+            margin: var(--space-lg) 0;
+            transition: background 0.3s ease;
+        }
+
+        /* 章节标题 */
+        .section-label {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--color-text-muted);
+            margin-bottom: var(--space-md);
+            padding-bottom: var(--space-xs);
+            border-bottom: 1px solid var(--color-border);
+            transition: color 0.3s ease, border-color 0.3s ease;
+        }
+
+        /* 特性列表 */
+        .features-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .feature-item {
+            padding: var(--space-sm) 0;
+            border-bottom: 1px dashed var(--color-border);
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .feature-item:last-child {
+            border-bottom: none;
+        }
+
+        .feature-title {
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--color-text);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .feature-desc {
+            font-size: 13px;
+            color: var(--color-text-muted);
+            line-height: 1.5;
+        }
+
+        /* 主下载按钮 */
+        .btn-primary {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-xs);
+            width: 100%;
+            padding: 14px;
+            margin-top: var(--space-md);
+            background: var(--color-accent);
+            color: var(--color-surface);
+            border: 1px solid var(--color-accent);
+            font-family: var(--font-sans);
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            text-decoration: none;
+            cursor: pointer;
+            transition: background 0.2s ease, color 0.2s ease;
+        }
+
+        .btn-primary:hover {
+            background: transparent;
+            color: var(--color-accent);
+        }
+
+        /* 外部链接列表 */
+        .links-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .links-list li a {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: var(--space-md);
+            color: var(--color-text);
+            text-decoration: none;
+            padding: var(--space-sm) 0;
+            border-bottom: 1px solid var(--color-border);
+            font-size: 14px;
+            transition: padding-left 0.25s ease, color 0.3s ease, border-color 0.3s ease;
+        }
+
+        .links-list li a::after {
+            content: "→";
+            font-family: var(--font-mono);
+            color: var(--color-text-subtle);
+            flex: 0 0 auto;
+            transition: transform 0.25s ease, color 0.2s ease;
+        }
+
+        .links-list li a:hover {
+            padding-left: var(--space-xs);
+            color: var(--color-accent);
+        }
+
+        .links-list li a:hover::after {
+            transform: translateX(4px);
+            color: var(--color-accent);
+        }
+
+        /* 配置展示块 */
+        .code-block {
+            background: var(--color-code-bg);
+            border: 1px solid var(--color-border);
+            padding: var(--space-md);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            line-height: 1.6;
+            color: var(--color-text);
+            overflow-x: auto;
+            border-radius: 4px;
+            margin-top: var(--space-xs);
+        }
+
+        /* 页脚与统计 */
+        .footer {
+            margin-top: var(--space-xl);
+            padding-top: var(--space-md);
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--color-text-subtle);
+            letter-spacing: 0.05em;
+            text-align: center;
+            transition: color 0.3s ease;
+        }
+
+        .footer-stats {
+            margin-top: 8px;
+            font-size: 10px;
+            font-family: var(--font-mono);
+            color: var(--color-text-subtle);
+            text-align: center;
+        }
+
+        .footer-stats-divider {
+            margin: 0 4px;
+            color: var(--color-text-subtle);
+        }
+
+        /* 微妙淡入动画 */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .container > * {
+            animation: fadeIn 0.5s ease-out backwards;
+        }
+
+        .brand { animation-delay: 0s; }
+        .hero { animation-delay: 0.1s; }
+        .features-section { animation-delay: 0.2s; }
+        .action-section { animation-delay: 0.3s; }
+        .footer { animation-delay: 0.4s; }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <!-- 顶部标识栏与主题切换 -->
+        <div class="brand">
+            <span>PROMPT OPTIMIZER</span>
+            <div class="brand-line"></div>
+            <a href="https://github.com/zskfree/prompt_optimizer" class="brand-github" target="_blank" rel="noopener" title="GitHub Repository">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+                </svg>
+            </a>
+            <button class="theme-toggle" id="theme-toggle" aria-label="切换主题模式">
+                <svg class="icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                </svg>
+                <svg class="icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="5"></circle>
+                    <line x1="12" y1="1" x2="12" y2="3"></line>
+                    <line x1="12" y1="21" x2="12" y2="23"></line>
+                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                    <line x1="1" y1="12" x2="3" y2="12"></line>
+                    <line x1="21" y1="12" x2="23" y2="12"></line>
+                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                </svg>
+            </button>
+        </div>
+
+        <!-- 头部与引文标语 -->
+        <header class="hero">
+            <h1 class="hero-title">PromptOptimizer</h1>
+            <div class="hero-tags">
+                <span class="hero-tag">Windows 10/11</span>
+                <span class="hero-tag">Rust 2021</span>
+                <span class="hero-tag">OpenAI API</span>
+                <span class="hero-tag">Portable (~0.76 MiB)</span>
+            </div>
+            <blockquote>
+                <p>选中文字，一次手势，得到更清晰的提示词。</p>
+                <cite>选中目标文本后按住 <kbd>Ctrl</kbd> 快速三击 <kbd>A</kbd>，优化结果自动进入剪贴板</cite>
+            </blockquote>
+        </header>
+
+        <hr class="divider" />
+
+        <!-- 核心特性列表 -->
+        <section class="features-section">
+            <div class="section-label">Features / 核心特性</div>
+            <ul class="features-list">
+                <li class="feature-item">
+                    <div class="feature-title">⚡ 极简快捷，无需窗口</div>
+                    <div class="feature-desc">常驻系统托盘，把“选区 → 优化 → 粘贴”压缩成一次全局快捷手势。不打开聊天主窗口。</div>
+                </li>
+                <li class="feature-item">
+                    <div class="feature-title">🎯 原生选区提取</div>
+                    <div class="feature-desc">通过 Windows UI Automation 直接获取当前焦点控件的选中文本，无需模拟 <kbd>Ctrl+C</kbd>，不污染剪贴板历史。</div>
+                </li>
+                <li class="feature-item">
+                    <div class="feature-title">🪶 极致轻量常驻</div>
+                    <div class="feature-desc">基于原生 Rust 编写，无 GUI 框架与庞大运行时，Release 压缩体积仅 ~0.76 MiB，内存占用极低。</div>
+                </li>
+                <li class="feature-item">
+                    <div class="feature-title">🔒 无状态与隐私安全</div>
+                    <div class="feature-desc">每次只发送本次选区文本与配置规则，不维护会话历史，输入侧零读写。</div>
+                </li>
+                <li class="feature-item">
+                    <div class="feature-title">🌐 兼容通用 API</div>
+                    <div class="feature-desc">支持任意 OpenAI 兼容的 <code style="font-family: var(--font-mono); font-size: 12px;">/chat/completions</code> 接口，自由配置密钥、模型与采样参数。</div>
+                </li>
+            </ul>
+        </section>
+
+        <hr class="divider" />
+
+        <!-- 下载与项目链接行动区 -->
+        <section class="action-section">
+            <div class="section-label">Downloads & Resources / 下载与资源</div>
+
+            <a href="https://github.com/zskfree/prompt_optimizer/releases/latest/download/PromptOptimizer_v0.1.0.exe" class="btn-primary" target="_blank" rel="noopener">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                下载绿色版 PromptOptimizer.exe (v0.1.0)
+            </a>
+
+            <div style="margin-top: var(--space-md);">
+                <ul class="links-list">
+                    <li>
+                        <a href="https://github.com/zskfree/prompt_optimizer" target="_blank" rel="noopener">
+                            <span class="project-info">
+                                <span class="project-name">GitHub 源代码仓库</span>
+                                <span class="project-description">查看源码、构建方法与配置文档</span>
+                            </span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="https://github.com/zskfree/prompt_optimizer/releases" target="_blank" rel="noopener">
+                            <span class="project-info">
+                                <span class="project-name">Release 版本历史</span>
+                                <span class="project-description">下载历次更新版本与安装包</span>
+                            </span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="https://github.com/zskfree/prompt_optimizer/issues" target="_blank" rel="noopener">
+                            <span class="project-info">
+                                <span class="project-name">反馈与建议 (Issues)</span>
+                                <span class="project-description">提交 Bug 或新功能建议</span>
+                            </span>
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </section>
+
+        <hr class="divider" />
+
+        <!-- 快速配置参考 -->
+        <section class="config-section">
+            <div class="section-label">Quick Config / 配置参考 (config.json)</div>
+            <div class="feature-desc" style="margin-bottom: 8px;">首次运行会在同一目录自动生成 <code style="font-family: var(--font-mono); font-size: 12px;">config.json</code>，右键托盘“设置”修改配置：</div>
+            <pre class="code-block">{
+  "api_key": "YOUR_API_KEY",
+  "base_url": "https://api.openai.com/v1",
+  "model": "gpt-4o-mini",
+  "hotkey": "Ctrl+TripleA",
+  "temperature": 0.3,
+  "max_tokens": 512
+}</pre>
+        </section>
+
+        <!-- 页脚 -->
+        <footer class="footer">
+            <div>© 2026 PromptOptimizer · Built with Rust</div>
+            <div class="footer-stats">
+                <span id="busuanzi_container_site_pv" style="display:none;">
+                    访问量 <span id="busuanzi_value_site_pv">--</span>
+                </span>
+                <span class="footer-stats-divider">·</span>
+                <span id="busuanzi_container_site_uv" style="display:none;">
+                    访客数 <span id="busuanzi_value_site_uv">--</span>
+                </span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- 深浅色主题切换逻辑 -->
+    <script>
+        (function () {
+            const toggleBtn = document.getElementById('theme-toggle');
+            const root = document.documentElement;
+
+            function getPreferredTheme() {
+                const stored = localStorage.getItem('theme');
+                if (stored) return stored;
+                return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+
+            function setTheme(theme) {
+                if (theme === 'dark') {
+                    root.setAttribute('data-theme', 'dark');
+                } else {
+                    root.removeAttribute('data-theme');
+                }
+                localStorage.setItem('theme', theme);
+            }
+
+            setTheme(getPreferredTheme());
+
+            toggleBtn.addEventListener('click', function () {
+                const current = root.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+                const next = current === 'dark' ? 'light' : 'dark';
+                setTheme(next);
+            });
+        })();
+    </script>
+</body>
+
+</html>
