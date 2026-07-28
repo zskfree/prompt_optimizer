@@ -1,5 +1,5 @@
 /target/
-/dist/
-/config.json
+dist/PromptOptimizer.exe
+dist/config.json
 /config.invalid-*.json
 /*.log
