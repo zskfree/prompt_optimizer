@@ -1,4 +1,8 @@
 # PromptOptimizer 详细规格说明书（v1.0）
+
+> [!NOTE]
+> 本文档为项目立项时的**初始开发规范（v1.0）**，仅作为最初设计的历史背景参考。具体实现的最新行为（如 Windows UI Automation 选区、`Ctrl+TripleA` 手势及原生 Win32 接口实现）请以代码、测试及主 [README.md](../README.md) 为准。
+
 ## 1. 项目概述
 **项目名称**：PromptOptimizer
 **类型**：Windows 绿色单文件工具

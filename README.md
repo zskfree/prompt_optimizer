@@ -70,7 +70,7 @@ cargo build --release
 }
 ```
 
-> `base_url` 应指向 API 根路径，例如 `https://api.openai.com/v1`；程序会自动追加 `/chat/completions`。v1.1.1 及更早版本的重复顶层 API 字段会在加载时自动迁移到当前配置，并在下次保存时清理。不要提交或分享包含真实 API Key 的配置文件。
+> `base_url` 应指向 API 根路径，例如 `https://api.openai.com/v1`；程序会自动追加 `/chat/completions`。v0.1.0 及更早版本的重复顶层 API 字段会在加载时自动迁移到当前配置，并在下次保存时清理。不要提交或分享包含真实 API Key 的配置文件。
 
 ### 3. 完成第一次优化
 
