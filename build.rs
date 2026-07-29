@@ -6,6 +6,7 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-changed=assets/prompt-optimizer.rc");
     println!("cargo:rerun-if-changed=assets/prompt-optimizer.ico");
+    println!("cargo:rerun-if-changed=assets/prompt-optimizer.exe.manifest");
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;

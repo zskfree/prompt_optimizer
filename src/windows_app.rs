@@ -1,5 +1,6 @@
 mod clipboard;
 mod selection;
+mod settings;
 mod startup;
 
 use prompt_optimizer::api::ApiClient;
@@ -32,24 +33,24 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, VK_CONTROL,
 };
 use windows::Win32::UI::Shell::{
-    ShellExecuteW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
-    NIM_MODIFY, NOTIFYICONDATAW,
+    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+    NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CallNextHookEx, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW,
     DefWindowProcW, DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, GetClientRect,
     GetCursorPos, GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetWindowLongPtrW,
-    GetWindowRect, GetWindowThreadProcessId, KillTimer, LoadCursorW, MessageBoxW, PostMessageW,
-    PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow,
+    GetWindowRect, GetWindowThreadProcessId, IsWindow, KillTimer, LoadCursorW, MessageBoxW,
+    PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow,
     SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
     SetWindowsHookExW, ShowWindow, TrackPopupMenu, TranslateMessage, UnhookWindowsHookEx,
     CREATESTRUCTW, CW_USEDEFAULT, GUITHREADINFO, GWLP_USERDATA, HHOOK, HICON, HWND_TOPMOST,
     IDC_ARROW, IMAGE_FLAGS, KBDLLHOOKSTRUCT, LLKHF_INJECTED, LR_DEFAULTCOLOR, LWA_ALPHA,
     MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MF_SEPARATOR, MF_STRING, MSG, SWP_NOACTIVATE,
-    SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNORMAL, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RETURNCMD,
-    TPM_RIGHTBUTTON, WH_KEYBOARD_LL, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CONTEXTMENU,
-    WM_DESTROY, WM_ERASEBKGND, WM_HOTKEY, WM_KEYDOWN, WM_KEYUP, WM_NCCREATE, WM_NULL, WM_PAINT,
-    WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    SWP_SHOWWINDOW, SW_HIDE, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+    WH_KEYBOARD_LL, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CONTEXTMENU, WM_DESTROY,
+    WM_ERASEBKGND, WM_HOTKEY, WM_KEYDOWN, WM_KEYUP, WM_NCCREATE, WM_NULL, WM_PAINT, WM_RBUTTONUP,
+    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
@@ -175,12 +176,22 @@ enum WorkerCommand {
         config: Config,
         text: String,
     },
+    TestApi {
+        settings_hwnd: isize,
+        config: Config,
+    },
     Shutdown,
 }
 
-struct WorkerResult {
-    task_id: u64,
-    result: Result<String, String>,
+enum WorkerResult {
+    Optimize {
+        task_id: u64,
+        result: Result<String, String>,
+    },
+    TestApi {
+        settings_hwnd: isize,
+        result: Result<(), String>,
+    },
 }
 
 struct AppState {
@@ -196,6 +207,7 @@ struct AppState {
     worker_rx: Receiver<WorkerResult>,
     icon: HICON,
     taskbar_created: u32,
+    settings_hwnd: HWND,
 }
 
 pub fn run() -> Result<(), AppError> {
@@ -255,6 +267,7 @@ pub fn run() -> Result<(), AppError> {
         worker_rx: result_rx,
         icon,
         taskbar_created: unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) },
+        settings_hwnd: HWND::default(),
     });
     unsafe {
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, (&mut *state as *mut AppState) as isize);
@@ -287,9 +300,14 @@ pub fn run() -> Result<(), AppError> {
             hwnd,
             state.icon,
             "首次运行",
-            "已创建 config.json，请先填写 API Key",
+            "已创建配置，请在设置中填写 API Key",
             false,
         );
+    }
+    if first_run {
+        unsafe {
+            open_config(hwnd, &mut state);
+        }
     }
 
     let mut message = MSG::default();
@@ -309,6 +327,9 @@ pub fn run() -> Result<(), AppError> {
     }
     delete_tray_icon(hwnd);
     unsafe {
+        if !state.settings_hwnd.is_invalid() && IsWindow(Some(state.settings_hwnd)).as_bool() {
+            let _ = DestroyWindow(state.settings_hwnd);
+        }
         let _ = DestroyIcon(state.icon);
         let _ = CloseHandle(mutex);
     }
@@ -348,6 +369,7 @@ fn register_window_class(instance: HINSTANCE) -> Result<(), AppError> {
     if unsafe { RegisterClassW(&status_class) } == 0 {
         return Err(AppError(WindowsError::from_thread().to_string()));
     }
+    settings::register(instance).map_err(AppError::from)?;
     Ok(())
 }
 
@@ -395,6 +417,55 @@ unsafe extern "system" fn window_proc(
                 on_worker_done(hwnd, state);
                 return LRESULT(0);
             }
+            settings::WM_APPLY_CONFIG => {
+                let request = lparam.0 as *mut settings::ApplyRequest;
+                if request.is_null() {
+                    return LRESULT(0);
+                }
+                match apply_config(hwnd, state, (*request).config.clone(), true) {
+                    Ok(()) => {
+                        (*request).error = None;
+                        return LRESULT(1);
+                    }
+                    Err(error) => {
+                        (*request).error = Some(error);
+                        return LRESULT(0);
+                    }
+                }
+            }
+            settings::WM_TEST_API => {
+                let request = lparam.0 as *mut settings::ApiTestRequest;
+                if request.is_null() {
+                    return LRESULT(0);
+                }
+                if state.busy {
+                    (*request).error = Some("后台任务正在运行，请稍候".into());
+                    return LRESULT(0);
+                }
+                let settings_hwnd = wparam.0 as isize;
+                state.busy = true;
+                update_tooltip(hwnd, state.icon, "正在测试 API…");
+                if state
+                    .worker_tx
+                    .send(WorkerCommand::TestApi {
+                        settings_hwnd,
+                        config: (*request).config.clone(),
+                    })
+                    .is_err()
+                {
+                    state.busy = false;
+                    (*request).error = Some("API 工作线程不可用".into());
+                    return LRESULT(0);
+                }
+                (*request).error = None;
+                return LRESULT(1);
+            }
+            settings::WM_SETTINGS_CLOSED => {
+                if state.settings_hwnd.0 as usize == wparam.0 {
+                    state.settings_hwnd = HWND::default();
+                }
+                return LRESULT(0);
+            }
             WM_DESTROY => {
                 PostQuitMessage(0);
                 return LRESULT(0);
@@ -414,17 +485,21 @@ unsafe fn on_hotkey(hwnd: HWND, state: &mut AppState) {
             hwnd,
             state.icon,
             "PromptOptimizer",
-            "正在优化，请稍候",
+            "后台任务正在运行，请稍候",
             false,
         );
         return;
     }
-    if state.config.api_key.trim().is_empty() {
+    if state
+        .config
+        .active_api()
+        .is_none_or(|api| api.api_key.trim().is_empty())
+    {
         notify(
             hwnd,
             state.icon,
             "缺少 API Key",
-            "请打开设置并填写 api_key",
+            "请打开设置并填写当前 API 配置的 Key",
             true,
         );
         return;
@@ -466,27 +541,48 @@ unsafe fn on_worker_done(hwnd: HWND, state: &mut AppState) {
     let Ok(result) = state.worker_rx.try_recv() else {
         return;
     };
-    if state.active_task_id != Some(result.task_id) {
-        return;
-    }
-    state.busy = false;
-    state.active_task_id = None;
-    update_tooltip(
-        hwnd,
-        state.icon,
-        &format!("运行中 | 热键: {}", state.hotkey.display),
-    );
-    match result.result {
-        Ok(text) => match clipboard::write_text(&text) {
-            Ok(()) => {
-                if state.config.play_sound {
-                    let _ = MessageBeep(MB_OK);
-                }
-                notify(hwnd, state.icon, "PromptOptimizer", "已复制", false);
+    match result {
+        WorkerResult::Optimize { task_id, result } => {
+            if state.active_task_id != Some(task_id) {
+                return;
             }
-            Err(error) => notify(hwnd, state.icon, "写入剪贴板失败", &error.to_string(), true),
-        },
-        Err(error) => notify(hwnd, state.icon, "优化失败", &error, true),
+            state.busy = false;
+            state.active_task_id = None;
+            update_tooltip(
+                hwnd,
+                state.icon,
+                &format!("运行中 | 热键: {}", state.hotkey.display),
+            );
+            match result {
+                Ok(text) => match clipboard::write_text(&text) {
+                    Ok(()) => {
+                        if state.config.play_sound {
+                            let _ = MessageBeep(MB_OK);
+                        }
+                        notify(hwnd, state.icon, "PromptOptimizer", "已复制", false);
+                    }
+                    Err(error) => {
+                        notify(hwnd, state.icon, "写入剪贴板失败", &error.to_string(), true)
+                    }
+                },
+                Err(error) => notify(hwnd, state.icon, "优化失败", &error, true),
+            }
+        }
+        WorkerResult::TestApi {
+            settings_hwnd,
+            result,
+        } => {
+            state.busy = false;
+            update_tooltip(
+                hwnd,
+                state.icon,
+                &format!("运行中 | 热键: {}", state.hotkey.display),
+            );
+            let settings_hwnd = HWND(settings_hwnd as *mut c_void);
+            if state.settings_hwnd == settings_hwnd && IsWindow(Some(settings_hwnd)).as_bool() {
+                settings::complete_api_test(settings_hwnd, result);
+            }
+        }
     }
 }
 
@@ -522,24 +618,21 @@ unsafe fn show_tray_menu(hwnd: HWND, state: &mut AppState) {
     }
 }
 
-unsafe fn open_config(hwnd: HWND, state: &AppState) {
-    let path = wide(state.config_path.to_string_lossy().as_ref());
-    let result = ShellExecuteW(
-        Some(hwnd),
-        w!("open"),
-        PCWSTR(path.as_ptr()),
-        None,
-        None,
-        SW_SHOWNORMAL,
-    );
-    if result.0 as isize <= 32 {
-        notify(
-            hwnd,
-            state.icon,
-            "打开设置失败",
-            "无法使用默认编辑器打开 config.json",
-            true,
-        );
+unsafe fn open_config(hwnd: HWND, state: &mut AppState) {
+    if !state.settings_hwnd.is_invalid() && IsWindow(Some(state.settings_hwnd)).as_bool() {
+        settings::focus(state.settings_hwnd);
+        return;
+    }
+    let instance = HINSTANCE(match GetModuleHandleW(None) {
+        Ok(module) => module.0,
+        Err(error) => {
+            notify(hwnd, state.icon, "打开设置失败", &error.to_string(), true);
+            return;
+        }
+    });
+    match settings::show(hwnd, instance, state.icon, &state.config) {
+        Ok(settings_hwnd) => state.settings_hwnd = settings_hwnd,
+        Err(error) => notify(hwnd, state.icon, "打开设置失败", &error.to_string(), true),
     }
 }
 
@@ -561,57 +654,94 @@ unsafe fn reload_config(hwnd: HWND, state: &mut AppState) {
             return;
         }
     };
-    let new_hotkey = match parse_hotkey(&new_config.hotkey) {
-        Ok(hotkey) => hotkey,
-        Err(error) => {
-            notify(hwnd, state.icon, "配置重载失败", &error.to_string(), true);
-            return;
+    match apply_config(hwnd, state, new_config, false) {
+        Ok(()) => {
+            if !state.settings_hwnd.is_invalid() && IsWindow(Some(state.settings_hwnd)).as_bool() {
+                settings::refresh(state.settings_hwnd, &state.config);
+            }
+            notify(hwnd, state.icon, "PromptOptimizer", "配置已重新加载", false);
         }
-    };
+        Err(error) => notify(hwnd, state.icon, "配置重载失败", &error, true),
+    }
+}
 
-    let hotkey_changed = new_hotkey != state.hotkey || !state.hotkey_registered;
+unsafe fn apply_config(
+    hwnd: HWND,
+    state: &mut AppState,
+    new_config: Config,
+    persist: bool,
+) -> Result<(), String> {
+    if state.busy {
+        return Err("后台任务进行中，请完成后再保存配置".into());
+    }
+    new_config.validate().map_err(|error| error.to_string())?;
+    let new_hotkey = parse_hotkey(&new_config.hotkey).map_err(|error| error.to_string())?;
+    let old_hotkey = state.hotkey.clone();
+    let old_registered = state.hotkey_registered;
+    let old_auto_start = state.config.auto_start;
+    let hotkey_changed = new_hotkey != old_hotkey || !old_registered;
+
     if hotkey_changed {
-        if state.hotkey_registered {
-            deactivate_hotkey(hwnd, &state.hotkey);
+        if old_registered {
+            deactivate_hotkey(hwnd, &old_hotkey);
         }
         if let Err(error) = activate_hotkey(hwnd, &new_hotkey) {
-            state.hotkey_registered = activate_hotkey(hwnd, &state.hotkey).is_ok();
-            notify(
-                hwnd,
-                state.icon,
-                "配置重载失败",
-                &format!("新热键注册失败：{error}"),
-                true,
-            );
-            return;
+            state.hotkey_registered = old_registered && activate_hotkey(hwnd, &old_hotkey).is_ok();
+            return Err(format!("新热键无法注册：{error}"));
         }
     }
 
     if let Err(error) = startup::set_auto_start(new_config.auto_start, &state.exe_path) {
-        if hotkey_changed {
-            deactivate_hotkey(hwnd, &new_hotkey);
-            state.hotkey_registered = activate_hotkey(hwnd, &state.hotkey).is_ok();
-        }
-        let _ = startup::set_auto_start(state.config.auto_start, &state.exe_path);
-        notify(
+        rollback_hotkey(
             hwnd,
-            state.icon,
-            "配置重载失败",
-            &format!("开机自启设置失败：{error}"),
-            true,
+            state,
+            &new_hotkey,
+            &old_hotkey,
+            hotkey_changed,
+            old_registered,
         );
-        return;
+        let _ = startup::set_auto_start(old_auto_start, &state.exe_path);
+        return Err(format!("开机自启设置失败：{error}"));
+    }
+
+    if persist {
+        if let Err(error) = config::save(&state.config_path, &new_config) {
+            let _ = startup::set_auto_start(old_auto_start, &state.exe_path);
+            rollback_hotkey(
+                hwnd,
+                state,
+                &new_hotkey,
+                &old_hotkey,
+                hotkey_changed,
+                old_registered,
+            );
+            return Err(error.to_string());
+        }
     }
 
     state.config = new_config;
     state.hotkey = new_hotkey;
-    state.hotkey_registered = true;
+    state.hotkey_registered = if hotkey_changed { true } else { old_registered };
     update_tooltip(
         hwnd,
         state.icon,
         &format!("运行中 | 热键: {}", state.hotkey.display),
     );
-    notify(hwnd, state.icon, "PromptOptimizer", "配置已重新加载", false);
+    Ok(())
+}
+
+unsafe fn rollback_hotkey(
+    hwnd: HWND,
+    state: &mut AppState,
+    new_hotkey: &HotkeySpec,
+    old_hotkey: &HotkeySpec,
+    hotkey_changed: bool,
+    old_registered: bool,
+) {
+    if hotkey_changed {
+        deactivate_hotkey(hwnd, new_hotkey);
+        state.hotkey_registered = old_registered && activate_hotkey(hwnd, old_hotkey).is_ok();
+    }
 }
 
 fn start_worker(
@@ -631,7 +761,31 @@ fn start_worker(
                     let result = client
                         .optimize_request(&config, &text, task_id)
                         .map_err(|error| error.to_string());
-                    if result_tx.send(WorkerResult { task_id, result }).is_err() {
+                    if result_tx
+                        .send(WorkerResult::Optimize { task_id, result })
+                        .is_err()
+                    {
+                        break;
+                    }
+                    unsafe {
+                        let hwnd = HWND(hwnd_raw as *mut c_void);
+                        let _ = PostMessageW(Some(hwnd), WM_WORKER_DONE, WPARAM(0), LPARAM(0));
+                    }
+                }
+                WorkerCommand::TestApi {
+                    settings_hwnd,
+                    config,
+                } => {
+                    let result = client
+                        .test_connection(&config)
+                        .map_err(|error| error.to_string());
+                    if result_tx
+                        .send(WorkerResult::TestApi {
+                            settings_hwnd,
+                            result,
+                        })
+                        .is_err()
+                    {
                         break;
                     }
                     unsafe {

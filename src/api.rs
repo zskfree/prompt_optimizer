@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{ApiProfile, Config};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
@@ -16,6 +16,7 @@ pub struct ApiClient {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ApiError {
+    InvalidConfig(String),
     Http { status: u16, message: String },
     Network(String),
     InvalidResponse(String),
@@ -25,9 +26,11 @@ pub enum ApiError {
 impl Display for ApiError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Http { status: 401, .. } => {
-                formatter.write_str("API 认证失败（401），请检查 API Key")
-            }
+            Self::InvalidConfig(message) => write!(formatter, "API 配置无效：{message}"),
+            Self::Http {
+                status: 401,
+                message,
+            } => write!(formatter, "API 认证失败（401）：{message}"),
             Self::Http { status, message } => write!(formatter, "API 返回错误 {status}：{message}"),
             Self::Network(message) => formatter.write_str(network_error_message(message)),
             Self::InvalidResponse(message) => write!(formatter, "API 响应格式错误：{message}"),
@@ -93,21 +96,33 @@ impl ApiClient {
         self.optimize_request(config, text, 0)
     }
 
+    pub fn test_connection(&self, config: &Config) -> Result<(), ApiError> {
+        let mut test_config = config.clone();
+        test_config.system_prompt = "这是一次 API 连通性测试。请仅回复 OK。".into();
+        let api = test_config
+            .active_api_mut()
+            .ok_or_else(|| ApiError::InvalidConfig("当前配置不存在".into()))?;
+        api.temperature = 0.0;
+        api.max_tokens = api.max_tokens.min(16);
+        self.optimize_request(&test_config, "请回复 OK", 0)
+            .map(|_| ())
+    }
+
     pub fn optimize_request(
         &self,
         config: &Config,
         text: &str,
         request_id: u64,
     ) -> Result<String, ApiError> {
-        let request = build_request(config, text);
+        let api = config
+            .active_api()
+            .ok_or_else(|| ApiError::InvalidConfig("当前配置不存在".into()))?;
+        let request = build_request(config, api, text);
 
         let mut response = self
             .agent
-            .post(&config.endpoint())
-            .header(
-                "Authorization",
-                &format!("Bearer {}", config.api_key.trim()),
-            )
+            .post(&api.endpoint())
+            .header("Authorization", &format!("Bearer {}", api.api_key.trim()))
             .header("Content-Type", "application/json")
             .header("Cache-Control", "no-store")
             .header("X-PromptOptimizer-Request-Id", &request_id.to_string())
@@ -125,7 +140,7 @@ impl ApiClient {
         if !(200..300).contains(&status) {
             return Err(ApiError::Http {
                 status,
-                message: provider_error_message(&body),
+                message: provider_error_message(&body, api.api_key.trim()),
             });
         }
 
@@ -146,9 +161,9 @@ impl ApiClient {
     }
 }
 
-fn build_request<'a>(config: &'a Config, text: &str) -> ChatRequest<'a> {
+fn build_request<'a>(config: &'a Config, api: &'a ApiProfile, text: &str) -> ChatRequest<'a> {
     ChatRequest {
-        model: config.model.trim(),
+        model: api.model.trim(),
         messages: [
             ChatMessage {
                 role: "system",
@@ -163,8 +178,8 @@ fn build_request<'a>(config: &'a Config, text: &str) -> ChatRequest<'a> {
                 ),
             },
         ],
-        temperature: config.temperature,
-        max_tokens: config.max_tokens,
+        temperature: api.temperature,
+        max_tokens: api.max_tokens,
         stream: false,
     }
 }
@@ -175,14 +190,23 @@ impl Default for ApiClient {
     }
 }
 
-fn provider_error_message(body: &str) -> String {
+fn provider_error_message(body: &str, api_key: &str) -> String {
     let parsed = serde_json::from_str::<serde_json::Value>(body).ok();
     let message = parsed
         .as_ref()
         .and_then(|value| value.pointer("/error/message"))
         .and_then(|value| value.as_str())
         .unwrap_or(body);
-    truncate(message.trim(), 200)
+    redact_api_key(message.trim(), api_key)
+}
+
+fn redact_api_key(message: &str, api_key: &str) -> String {
+    let api_key = api_key.trim();
+    if api_key.len() >= 8 {
+        message.replace(api_key, "[API Key 已隐藏]")
+    } else {
+        message.to_string()
+    }
 }
 
 fn sanitize(message: &str) -> String {
@@ -268,11 +292,11 @@ mod tests {
     }
 
     fn config_for(base_url: String) -> Config {
-        Config {
-            api_key: "test-key".into(),
-            base_url,
-            ..Config::default()
-        }
+        let mut config = Config::default();
+        let api = config.active_api_mut().unwrap();
+        api.api_key = "test-key".into();
+        api.base_url = base_url;
+        config
     }
 
     #[test]
@@ -293,8 +317,9 @@ mod tests {
             system_prompt: "保持简洁".into(),
             ..Config::default()
         };
-        let first = serde_json::to_value(build_request(&config, "第一条输入")).unwrap();
-        let second = serde_json::to_value(build_request(&config, "第二条输入")).unwrap();
+        let api = config.active_api().unwrap();
+        let first = serde_json::to_value(build_request(&config, api, "第一条输入")).unwrap();
+        let second = serde_json::to_value(build_request(&config, api, "第二条输入")).unwrap();
 
         assert_eq!(first["messages"].as_array().unwrap().len(), 2);
         assert!(first["messages"][0]["content"]
@@ -307,6 +332,15 @@ mod tests {
             .contains("第二条输入"));
         assert!(!second.to_string().contains("第一条输入"));
         assert_eq!(second["stream"], false);
+    }
+
+    #[test]
+    fn connection_test_uses_the_same_compatible_endpoint() {
+        let config = config_for(mock_response(
+            200,
+            r#"{"choices":[{"message":{"content":"OK"}}]}"#,
+        ));
+        assert!(ApiClient::new().test_connection(&config).is_ok());
     }
 
     #[test]
@@ -325,18 +359,42 @@ mod tests {
     }
 
     #[test]
-    fn reports_unauthorized_without_leaking_provider_body() {
+    fn provider_error_message_is_not_truncated() {
+        let message = format!("{}TAIL", "错误详情".repeat(70));
+        let body = serde_json::json!({ "error": { "message": message } }).to_string();
+
+        assert_eq!(provider_error_message(&body, "test-key"), message);
+    }
+
+    #[test]
+    fn provider_error_message_redacts_the_configured_api_key() {
+        let api_key = "sk-sensitive-test-value";
+        let body = serde_json::json!({
+            "error": { "message": format!("credential {api_key} was rejected") }
+        })
+        .to_string();
+        let displayed = provider_error_message(&body, api_key);
+
+        assert!(!displayed.contains(api_key));
+        assert!(displayed.contains("[API Key 已隐藏]"));
+    }
+
+    #[test]
+    fn reports_complete_unauthorized_message_without_leaking_api_key() {
         let config = config_for(mock_response(
             401,
-            r#"{"error":{"message":"invalid secret"}}"#,
+            r#"{"error":{"message":"credential test-key is invalid"}}"#,
         ));
+        let displayed = ApiClient::new()
+            .optimize(&config, "input")
+            .unwrap_err()
+            .to_string();
+
         assert_eq!(
-            ApiClient::new()
-                .optimize(&config, "input")
-                .unwrap_err()
-                .to_string(),
-            "API 认证失败（401），请检查 API Key"
+            displayed,
+            "API 认证失败（401）：credential [API Key 已隐藏] is invalid"
         );
+        assert!(!displayed.contains("test-key"));
     }
 
     #[test]

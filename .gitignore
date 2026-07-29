@@ -1,5 +1,20 @@
 /target/
 dist/PromptOptimizer.exe
-dist/config.json
+
+# 禁止上传 dist 中的任何子文件夹，允许上传压缩包 (.zip, .7z, .tar.gz 等)
+dist/*/
+!dist/*.zip
+!dist/*.tar.gz
+!dist/*.7z
+!dist/*.rar
+!dist/*.gz
+
+# 禁止上传任何 config.json 及其相关配置文件
+config.json
+**/config.json
+config*.json
 /config.invalid-*.json
+
 /*.log
+.hallmark/
+
