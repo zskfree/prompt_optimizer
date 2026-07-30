@@ -13,6 +13,8 @@ pub struct ApiProfile {
     pub name: String,
     pub api_key: String,
     pub base_url: String,
+    #[serde(default)]
+    pub models: Vec<String>,
     pub model: String,
     pub temperature: f64,
     pub max_tokens: u32,
@@ -49,6 +51,7 @@ impl Default for ApiProfile {
             name: DEFAULT_API_PROFILE_NAME.into(),
             api_key: String::new(),
             base_url: "https://api.openai.com/v1".into(),
+            models: vec!["gpt-4o-mini".into()],
             model: "gpt-4o-mini".into(),
             temperature: 0.3,
             max_tokens: 512,
@@ -66,7 +69,7 @@ struct ConfigFile {
     result_mode: String,
     play_sound: bool,
     auto_start: bool,
-    // v1.1 and earlier stored the active API values here as a second copy.
+    // v0.1.0 and earlier stored the active API values here as a second copy.
     api_key: Option<String>,
     base_url: Option<String>,
     model: Option<String>,
@@ -139,6 +142,7 @@ impl From<io::Error> for ConfigError {
 impl Config {
     fn from_file(file: ConfigFile) -> Self {
         let mut profiles = file.api_profiles;
+        let profiles_were_empty = profiles.is_empty();
         let legacy_present = file.api_key.is_some()
             || file.base_url.is_some()
             || file.model.is_some()
@@ -171,6 +175,9 @@ impl Config {
                 active.base_url = value;
             }
             if let Some(value) = file.model {
+                if profiles_were_empty {
+                    active.models.clear();
+                }
                 active.model = value;
             }
             if let Some(value) = file.temperature {
@@ -179,6 +186,10 @@ impl Config {
             if let Some(value) = file.max_tokens {
                 active.max_tokens = value;
             }
+        }
+
+        for profile in &mut profiles {
+            normalize_profile_models(profile);
         }
 
         let active_profile = profiles[active_index].name.trim().to_string();
@@ -268,6 +279,39 @@ impl ApiProfile {
                 "API 配置名称不能超过 40 个字符或包含控制字符".into(),
             ));
         }
+        if self.models.is_empty() {
+            return Err(ConfigError::Invalid("至少需要配置一个模型".into()));
+        }
+        if self.models.len() > 50 {
+            return Err(ConfigError::Invalid(
+                "每个 API 配置最多保存 50 个模型".into(),
+            ));
+        }
+        let mut model_names = std::collections::HashSet::new();
+        for model in &self.models {
+            let model = model.trim();
+            if model.is_empty() {
+                return Err(ConfigError::Invalid("模型名称不能为空".into()));
+            }
+            if model.chars().count() > 200 || model.chars().any(char::is_control) {
+                return Err(ConfigError::Invalid(
+                    "模型名称不能超过 200 个字符或包含控制字符".into(),
+                ));
+            }
+            if !model_names.insert(model) {
+                return Err(ConfigError::Invalid(format!("模型名称重复：{model}")));
+            }
+        }
+        if !self
+            .models
+            .iter()
+            .any(|model| model.trim() == self.model.trim())
+        {
+            return Err(ConfigError::Invalid(format!(
+                "当前模型不在可用模型列表中：{}",
+                self.model.trim()
+            )));
+        }
         validate_api_fields(
             &self.base_url,
             &self.model,
@@ -275,6 +319,28 @@ impl ApiProfile {
             self.max_tokens,
         )
     }
+}
+
+fn normalize_profile_models(profile: &mut ApiProfile) {
+    let selected = profile.model.trim().to_string();
+    let mut models = Vec::new();
+    for model in std::mem::take(&mut profile.models) {
+        let model = model.trim().to_string();
+        if !model.is_empty() && !models.contains(&model) {
+            models.push(model);
+        }
+    }
+    if !selected.is_empty() && !models.contains(&selected) {
+        models.push(selected.clone());
+    }
+    if selected.is_empty() {
+        if let Some(first) = models.first() {
+            profile.model = first.clone();
+        }
+    } else {
+        profile.model = selected;
+    }
+    profile.models = models;
 }
 
 fn validate_api_fields(
@@ -393,6 +459,7 @@ mod tests {
     fn missing_fields_use_defaults() {
         let config: Config = serde_json::from_str(r#"{"model":"custom"}"#).unwrap();
         assert_eq!(config.active_api().unwrap().model, "custom");
+        assert_eq!(config.active_api().unwrap().models, vec!["custom"]);
         assert_eq!(config.hotkey, "Ctrl+TripleA");
         assert_eq!(config.active_profile, DEFAULT_API_PROFILE_NAME);
         assert_eq!(config.api_profiles.len(), 1);
@@ -434,6 +501,7 @@ mod tests {
             name: "硅基流动".into(),
             api_key: "sf-key".into(),
             base_url: "https://api.siliconflow.cn/v1".into(),
+            models: vec!["deepseek-ai/DeepSeek-V4-Flash".into()],
             model: "deepseek-ai/DeepSeek-V4-Flash".into(),
             temperature: 0.2,
             max_tokens: 256,
@@ -461,6 +529,55 @@ mod tests {
         assert!(encoded.get("max_tokens").is_none());
         let encoded = serde_json::to_string(&config).unwrap();
         assert_eq!(serde_json::from_str::<Config>(&encoded).unwrap(), config);
+    }
+
+    #[test]
+    fn legacy_single_model_profile_migrates_to_a_selectable_model_list() {
+        let config: Config = serde_json::from_str(
+            r#"{
+                "active_profile":"工作",
+                "api_profiles":[{
+                    "name":"工作",
+                    "api_key":"key",
+                    "base_url":"https://example.com/v1",
+                    "model":"legacy-model",
+                    "temperature":0.3,
+                    "max_tokens":512
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        let profile = config.active_api().unwrap();
+        assert_eq!(profile.model, "legacy-model");
+        assert_eq!(profile.models, vec!["legacy-model"]);
+    }
+
+    #[test]
+    fn multiple_models_and_current_selection_round_trip_together() {
+        let mut config = Config::default();
+        let profile = config.active_api_mut().unwrap();
+        profile.models = vec!["gpt-4o-mini".into(), "gpt-5-mini".into()];
+        profile.model = "gpt-5-mini".into();
+
+        let encoded = serde_json::to_string(&config).unwrap();
+        let decoded: Config = serde_json::from_str(&encoded).unwrap();
+        let profile = decoded.active_api().unwrap();
+
+        assert_eq!(profile.models, vec!["gpt-4o-mini", "gpt-5-mini"]);
+        assert_eq!(profile.model, "gpt-5-mini");
+    }
+
+    #[test]
+    fn selected_model_must_exist_in_the_profile_model_list() {
+        let mut config = Config::default();
+        let profile = config.active_api_mut().unwrap();
+        profile.models = vec!["model-a".into(), "model-b".into()];
+        profile.model = "missing-model".into();
+
+        let error = config.validate().unwrap_err().to_string();
+
+        assert!(error.contains("当前模型不在可用模型列表中"));
     }
 
     #[test]
@@ -578,7 +695,9 @@ mod tests {
         save(&path, &original).unwrap();
 
         let mut updated = original.clone();
-        updated.active_api_mut().unwrap().model = "deepseek-ai/DeepSeek-V4-Flash".into();
+        let updated_profile = updated.active_api_mut().unwrap();
+        updated_profile.models = vec!["deepseek-ai/DeepSeek-V4-Flash".into()];
+        updated_profile.model = "deepseek-ai/DeepSeek-V4-Flash".into();
         updated.auto_start = true;
         save(&path, &updated).unwrap();
         assert_eq!(load_existing(&path).unwrap(), updated);

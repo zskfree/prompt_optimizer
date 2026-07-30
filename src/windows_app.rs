@@ -20,15 +20,16 @@ use windows::Win32::Foundation::{
     POINT, RECT, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateRoundRectRgn, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect,
-    GetMonitorInfoW, GetStockObject, InvalidateRect, MapWindowPoints, MonitorFromRect,
-    SelectObject, SetBkMode, SetTextColor, SetWindowRgn, UpdateWindow, DEFAULT_GUI_FONT, DT_CENTER,
-    DT_END_ELLIPSIS, DT_SINGLELINE, DT_VCENTER, MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT,
-    TRANSPARENT,
+    BeginPaint, CreatePen, CreateRoundRectRgn, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint,
+    GetMonitorInfoW, InvalidateRect, MapWindowPoints, MonitorFromRect, RoundRect, SelectObject,
+    SetBkMode, SetTextColor, SetWindowRgn, UpdateWindow, DT_END_ELLIPSIS, DT_SINGLELINE,
+    DT_VCENTER, HFONT, MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT, TRANSPARENT,
 };
+use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::Diagnostics::Debug::MessageBeep;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, VK_CONTROL,
 };
@@ -65,7 +66,7 @@ const WM_GESTURE_HOTKEY: u32 = WM_APP + 3;
 const MENU_SETTINGS: u32 = 1001;
 const MENU_RELOAD: u32 = 1002;
 const MENU_EXIT: u32 = 1003;
-const STATUS_HEIGHT: i32 = 30;
+const STATUS_HEIGHT: i32 = 34;
 const STATUS_MIN_WIDTH: i32 = 112;
 const STATUS_MAX_WIDTH: i32 = 300;
 const ICON_FILE: &[u8] = include_bytes!("../assets/prompt-optimizer.ico");
@@ -170,6 +171,21 @@ impl From<WindowsError> for AppError {
     }
 }
 
+struct ComApartment;
+
+impl ComApartment {
+    fn initialize() -> Result<Self, WindowsError> {
+        unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()? };
+        Ok(Self)
+    }
+}
+
+impl Drop for ComApartment {
+    fn drop(&mut self) {
+        unsafe { CoUninitialize() };
+    }
+}
+
 enum WorkerCommand {
     Optimize {
         task_id: u64,
@@ -211,6 +227,7 @@ struct AppState {
 }
 
 pub fn run() -> Result<(), AppError> {
+    let _com_apartment = ComApartment::initialize()?;
     let mutex = unsafe { CreateMutexW(None, true, w!("Local\\PromptOptimizer.SingleInstance")) }?;
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
         unsafe {
@@ -992,7 +1009,10 @@ fn notify(hwnd: HWND, icon: HICON, title: &str, message: &str, is_error: bool) {
 
 fn show_status_popup(message: &str, is_error: bool, new_task: bool) {
     let concise: String = message.chars().take(80).collect();
-    let width = status_text_width(&concise);
+    let dpi = popup_dpi();
+    let width = status_text_width(&concise, dpi);
+    let height = popup_scale(STATUS_HEIGHT, dpi);
+    let corner_radius = popup_scale(10, dpi);
     let text = wide(&concise);
     let Ok(mut state) = STATUS_POPUP.lock() else {
         return;
@@ -1012,7 +1032,7 @@ fn show_status_popup(message: &str, is_error: bool, new_task: bool) {
                 0,
                 0,
                 width,
-                STATUS_HEIGHT,
+                height,
                 None,
                 None,
                 Some(HINSTANCE(module.0)),
@@ -1028,15 +1048,22 @@ fn show_status_popup(message: &str, is_error: bool, new_task: bool) {
         }
     }
     if new_task || !state.visible || state.anchor.is_none() {
-        state.anchor = Some(capture_popup_anchor());
+        state.anchor = Some(capture_popup_anchor(dpi));
     }
     let popup = HWND(state.hwnd as *mut c_void);
-    let anchor = state.anchor.unwrap_or_else(capture_popup_anchor);
+    let anchor = state.anchor.unwrap_or_else(|| capture_popup_anchor(dpi));
     let display_width = width.min(anchor.max_width);
     let (x, y) = anchor.position(display_width);
     unsafe {
         let _ = SetWindowTextW(popup, PCWSTR(text.as_ptr()));
-        let region = CreateRoundRectRgn(0, 0, display_width + 1, STATUS_HEIGHT + 1, 10, 10);
+        let region = CreateRoundRectRgn(
+            0,
+            0,
+            display_width + 1,
+            height + 1,
+            corner_radius,
+            corner_radius,
+        );
         let _ = SetWindowRgn(popup, Some(region), false);
         let _ = SetWindowPos(
             popup,
@@ -1044,7 +1071,7 @@ fn show_status_popup(message: &str, is_error: bool, new_task: bool) {
             x,
             y,
             display_width,
-            STATUS_HEIGHT,
+            height,
             SWP_NOACTIVATE | SWP_SHOWWINDOW,
         );
         let _ = InvalidateRect(Some(popup), None, false);
@@ -1059,15 +1086,28 @@ fn show_status_popup(message: &str, is_error: bool, new_task: bool) {
     state.visible = true;
 }
 
-fn status_text_width(message: &str) -> i32 {
+fn status_text_width(message: &str, dpi: u32) -> i32 {
     let text_width: i32 = message
         .chars()
         .map(|character| if character.is_ascii() { 7 } else { 14 })
         .sum();
-    (text_width + 26).clamp(STATUS_MIN_WIDTH, STATUS_MAX_WIDTH)
+    popup_scale(text_width + 38, dpi).clamp(
+        popup_scale(STATUS_MIN_WIDTH, dpi),
+        popup_scale(STATUS_MAX_WIDTH, dpi),
+    )
 }
 
-fn capture_popup_anchor() -> PopupAnchor {
+fn popup_dpi() -> u32 {
+    unsafe { GetDpiForWindow(GetForegroundWindow()).max(96) }
+}
+
+fn popup_scale(value: i32, dpi: u32) -> i32 {
+    ((value as i64 * dpi as i64 + 48) / 96) as i32
+}
+
+fn capture_popup_anchor(dpi: u32) -> PopupAnchor {
+    let height = popup_scale(STATUS_HEIGHT, dpi);
+    let gap = popup_scale(8, dpi);
     let anchor = focused_input_rect().unwrap_or_else(|| {
         let mut point = POINT::default();
         unsafe {
@@ -1091,8 +1131,8 @@ fn capture_popup_anchor() -> PopupAnchor {
         anchor
     };
 
-    let right_edge = anchor.right + 8;
-    let left_edge = anchor.left - 8;
+    let right_edge = anchor.right + gap;
+    let left_edge = anchor.left - gap;
     let right_space = work.right - right_edge;
     let left_space = left_edge - work.left;
     let (side, edge_x, available) = if right_space >= left_space {
@@ -1100,16 +1140,19 @@ fn capture_popup_anchor() -> PopupAnchor {
     } else {
         (PopupSide::Left, left_edge, left_space)
     };
-    let mut y = anchor.bottom + 8;
-    if y + STATUS_HEIGHT > work.bottom {
-        y = anchor.top - STATUS_HEIGHT - 8;
+    let mut y = anchor.bottom + gap;
+    if y + height > work.bottom {
+        y = anchor.top - height - gap;
     }
-    y = y.clamp(work.top, (work.bottom - STATUS_HEIGHT).max(work.top));
+    y = y.clamp(work.top, (work.bottom - height).max(work.top));
     PopupAnchor {
         side,
         edge_x,
         y,
-        max_width: available.clamp(STATUS_MIN_WIDTH, STATUS_MAX_WIDTH),
+        max_width: available.clamp(
+            popup_scale(STATUS_MIN_WIDTH, dpi),
+            popup_scale(STATUS_MAX_WIDTH, dpi),
+        ),
         work_left: work.left,
         work_right: work.right,
     }
@@ -1177,37 +1220,126 @@ unsafe extern "system" fn status_window_proc(
     }
 }
 
+unsafe fn create_status_popup_font(dpi: u32) -> HFONT {
+    windows::Win32::Graphics::Gdi::CreateFontW(
+        -popup_scale(13, dpi),
+        0,
+        0,
+        0,
+        500,
+        0,
+        0,
+        0,
+        windows::Win32::Graphics::Gdi::DEFAULT_CHARSET,
+        windows::Win32::Graphics::Gdi::FONT_OUTPUT_PRECISION::default(),
+        windows::Win32::Graphics::Gdi::FONT_CLIP_PRECISION::default(),
+        windows::Win32::Graphics::Gdi::FONT_QUALITY(5),
+        windows::Win32::Graphics::Gdi::FF_DONTCARE.0 as u32,
+        w!("Segoe UI Variable Text"),
+    )
+}
+
 unsafe fn paint_status_window(hwnd: HWND) {
     let mut paint = PAINTSTRUCT::default();
     let dc = BeginPaint(hwnd, &mut paint);
     let mut rect = RECT::default();
     let _ = GetClientRect(hwnd, &mut rect);
-    let background = COLORREF(0x003A_3A3A);
-    let brush = CreateSolidBrush(background);
-    FillRect(dc, &rect, brush);
+    let dpi = GetDpiForWindow(hwnd).max(96);
+    let corner_radius = popup_scale(10, dpi);
+
+    let bg_color = COLORREF(0x00FF_FFFF);
+    let border_color = COLORREF(0x00EB_E7E5);
+    let brush = CreateSolidBrush(bg_color);
+    let pen = CreatePen(windows::Win32::Graphics::Gdi::PS_SOLID, 1, border_color);
+
+    let old_brush = SelectObject(dc, brush.into());
+    let old_pen = SelectObject(dc, pen.into());
+
+    let _ = RoundRect(
+        dc,
+        0,
+        0,
+        rect.right,
+        rect.bottom,
+        corner_radius,
+        corner_radius,
+    );
+
+    let _ = SelectObject(dc, old_pen);
+    let _ = SelectObject(dc, old_brush);
+    let _ = DeleteObject(pen.into());
     let _ = DeleteObject(brush.into());
 
-    let font = GetStockObject(DEFAULT_GUI_FONT);
-    let previous = SelectObject(dc, font);
+    let font = create_status_popup_font(dpi);
+    let previous_font = SelectObject(dc, font.into());
+
     let _ = SetBkMode(dc, TRANSPARENT);
-    let _ = SetTextColor(dc, COLORREF(0x00F4_F4F4));
-    let mut text = [0_u16; 96];
-    let length = windows::Win32::UI::WindowsAndMessaging::GetWindowTextW(hwnd, &mut text);
+
+    let mut text_buf = [0_u16; 96];
+    let length = windows::Win32::UI::WindowsAndMessaging::GetWindowTextW(hwnd, &mut text_buf);
+    let message = String::from_utf16_lossy(&text_buf[..length.max(0) as usize]);
+
+    let dot_color =
+        if message.contains("正在") || message.contains("优化中") || message.contains("测试中")
+        {
+            COLORREF(0x00EB_6325)
+        } else if message.contains("完成")
+            || message.contains("成功")
+            || message.contains("正常")
+            || message.contains("已复制")
+        {
+            COLORREF(0x0081_B910)
+        } else if message.contains("失败") || message.contains("错误") || message.contains("重置")
+        {
+            COLORREF(0x0044_44EF)
+        } else {
+            COLORREF(0x0080_7464)
+        };
+
+    let dot_brush = CreateSolidBrush(dot_color);
+    let dot_pen = CreatePen(windows::Win32::Graphics::Gdi::PS_SOLID, 1, dot_color);
+    let old_dbrush = SelectObject(dc, dot_brush.into());
+    let old_dpen = SelectObject(dc, dot_pen.into());
+
+    let dot_size = popup_scale(7, dpi);
+    let dot_top = (rect.bottom - dot_size) / 2;
+    let dot_left = popup_scale(12, dpi);
+    let _ = RoundRect(
+        dc,
+        dot_left,
+        dot_top,
+        dot_left + dot_size,
+        dot_top + dot_size,
+        dot_size,
+        dot_size,
+    );
+
+    let _ = SelectObject(dc, old_dpen);
+    let _ = SelectObject(dc, old_dbrush);
+    let _ = DeleteObject(dot_pen.into());
+    let _ = DeleteObject(dot_brush.into());
+
+    let _ = SetTextColor(dc, COLORREF(0x002A_170F));
     let mut text_rect = RECT {
-        left: 10,
+        left: popup_scale(26, dpi),
         top: 0,
-        right: rect.right - 10,
+        right: rect.right - popup_scale(10, dpi),
         bottom: rect.bottom,
     };
     DrawTextW(
         dc,
-        &mut text[..length.max(0) as usize],
+        &mut text_buf[..length.max(0) as usize],
         &mut text_rect,
         windows::Win32::Graphics::Gdi::DRAW_TEXT_FORMAT(
-            DT_CENTER.0 | DT_END_ELLIPSIS.0 | DT_SINGLELINE.0 | DT_VCENTER.0,
+            windows::Win32::Graphics::Gdi::DT_LEFT.0
+                | DT_END_ELLIPSIS.0
+                | DT_SINGLELINE.0
+                | DT_VCENTER.0,
         ),
     );
-    let _ = SelectObject(dc, previous);
+
+    let _ = SelectObject(dc, previous_font);
+    let _ = DeleteObject(font.into());
     let _ = EndPaint(hwnd, &paint);
 }
 
@@ -1299,8 +1431,8 @@ mod status_popup_tests {
 
     #[test]
     fn width_stays_within_compact_limits() {
-        assert_eq!(status_text_width("已复制"), STATUS_MIN_WIDTH);
-        assert_eq!(status_text_width(&"错误".repeat(40)), STATUS_MAX_WIDTH);
+        assert_eq!(status_text_width("已复制", 96), STATUS_MIN_WIDTH);
+        assert_eq!(status_text_width(&"错误".repeat(40), 96), STATUS_MAX_WIDTH);
     }
 
     #[test]

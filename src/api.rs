@@ -335,6 +335,19 @@ mod tests {
     }
 
     #[test]
+    fn request_uses_the_model_selected_in_the_active_profile() {
+        let mut config = Config::default();
+        let api = config.active_api_mut().unwrap();
+        api.models = vec!["model-a".into(), "model-b".into()];
+        api.model = "model-b".into();
+        let api = config.active_api().unwrap();
+
+        let request = serde_json::to_value(build_request(&config, api, "input")).unwrap();
+
+        assert_eq!(request["model"], "model-b");
+    }
+
+    #[test]
     fn connection_test_uses_the_same_compatible_endpoint() {
         let config = config_for(mock_response(
             200,

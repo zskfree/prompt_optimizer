@@ -452,7 +452,7 @@
       <div class="hero-tags">
         <span class="hero-tag">Windows 10/11</span>
         <span class="hero-tag">Rust 2021</span>
-        <span class="hero-tag">OpenAI API</span>
+        <span class="hero-tag">OpenAI-compatible API</span>
         <span class="hero-tag">RAM ~2 MB</span>
         <span class="hero-tag">Portable (<1 MiB)</span>
       </div>
@@ -480,9 +480,13 @@
         </li>
         <li class="feature-item">
           <div class="feature-title">🪶 极致轻量常驻</div>
-          <div class="feature-desc">基于原生 Rust 编写，无 GUI 框架与庞大运行时，Release 压缩包仅 ~535 KB，后台常驻内存仅 ~2 MB 左右。</div>
+          <div class="feature-desc">基于原生 Rust 编写，不打包庞大 GUI 运行时；未打开设置窗口时，后台常驻内存约 ~2 MB。</div>
         </li>
 
+        <li class="feature-item">
+          <div class="feature-title">🎨 Apple / Win11 风格设置界面 (v0.3.0)</div>
+          <div class="feature-desc">基于系统 WebView2 Runtime 渲染设置中心，支持系统深浅配色、多配置管理、自绘 Dropdown 和胶囊 Toggle；关闭窗口后尽力清理本次设置页临时目录。</div>
+        </li>
         <li class="feature-item">
           <div class="feature-title">🔒 无状态与隐私安全</div>
           <div class="feature-desc">每次只发送本次选区文本与配置规则，不维护会话历史，输入侧零读写。</div>
@@ -491,7 +495,7 @@
           <div class="feature-title">🌐 兼容通用 API</div>
           <div class="feature-desc">支持任意 OpenAI 兼容的 <code
               style="font-family: var(--font-mono); font-size: 12px;">/chat/completions</code>
-            接口，自由配置密钥、模型与采样参数。</div>
+            接口；每套服务配置可保存多个模型，并选择当前调用模型。</div>
         </li>
       </ul>
     </section>
@@ -502,7 +506,7 @@
     <section class="action-section">
       <div class="section-label">Downloads & Resources / 下载与资源</div>
 
-      <a href="https://github.com/zskfree/prompt_optimizer/releases/download/v0.2.0/PromptOptimizer_v0.2.0.zip"
+      <a href="https://github.com/zskfree/prompt_optimizer/releases/download/v0.3.0/PromptOptimizer_v0.3.0.zip"
         class="btn-primary" target="_blank" rel="noopener">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" stroke-width="2" stroke-linecap="round"
@@ -511,16 +515,27 @@
           <polyline points="7 10 12 15 17 10"></polyline>
           <line x1="12" y1="15" x2="12" y2="3"></line>
         </svg>
-        下载最新版 v0.2.0 (PromptOptimizer_v0.2.0.zip · 535 KB)
+        下载当前已发布版本 v0.3.0 (PromptOptimizer_v0.3.0.zip)
       </a>
 
       <!-- 版本明细与下载选择 -->
       <div style="margin-top: var(--space-md); display: flex; flex-direction: column; gap: var(--space-xs);">
-        <!-- v0.2.0 卡片 -->
+        <!-- v0.3.0 卡片 -->
         <div style="border: 1px solid var(--color-border); border-radius: 4px; padding: 14px; background: var(--color-surface);">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-            <span style="font-weight: 700; font-size: 14px; color: var(--color-text);">v0.2.0 <span style="font-size: 10px; font-family: var(--font-mono); background: var(--color-accent); color: var(--color-surface); padding: 2px 6px; border-radius: 3px; margin-left: 6px;">Latest 最新版</span></span>
-            <a href="https://github.com/zskfree/prompt_optimizer/releases/download/v0.2.0/PromptOptimizer_v0.2.0.zip" style="font-size: 12px; font-family: var(--font-mono); color: var(--color-text); text-decoration: underline;" target="_blank" rel="noopener">直接下载 (535 KB)</a>
+            <span style="font-weight: 700; font-size: 14px; color: var(--color-text);">v0.3.0 <span style="font-size: 10px; font-family: var(--font-mono); background: var(--color-accent); color: var(--color-surface); padding: 2px 6px; border-radius: 3px; margin-left: 6px;">当前已发布</span></span>
+            <a href="https://github.com/zskfree/prompt_optimizer/releases/download/v0.3.0/PromptOptimizer_v0.3.0.zip" style="font-size: 12px; font-family: var(--font-mono); color: var(--color-text-muted); text-decoration: underline;" target="_blank" rel="noopener">直接下载 (557 KB)</a>
+          </div>
+          <div style="font-size: 13px; color: var(--color-text-muted); line-height: 1.5;">
+            升级 WebView2 Apple / Win11 风格设置界面，支持系统深浅配色、多配置多模型选择、自绘下拉框与胶囊 Toggle；关闭设置窗口后尽力清理本次临时目录，并统一 Toast 浮窗视觉。
+          </div>
+        </div>
+
+        <!-- v0.2.0 卡片 -->
+        <div style="border: 1px solid var(--color-border); border-radius: 4px; padding: 14px; background: var(--color-surface); opacity: 0.85;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <span style="font-weight: 600; font-size: 14px; color: var(--color-text-muted);">v0.2.0 <span style="font-size: 10px; font-family: var(--font-mono); color: var(--color-text-subtle); margin-left: 4px;">历史版本</span></span>
+            <a href="https://github.com/zskfree/prompt_optimizer/releases/download/v0.2.0/PromptOptimizer_v0.2.0.zip" style="font-size: 12px; font-family: var(--font-mono); color: var(--color-text-muted); text-decoration: underline;" target="_blank" rel="noopener">直接下载 (535 KB)</a>
           </div>
           <div style="font-size: 13px; color: var(--color-text-muted); line-height: 1.5;">
             重构原生轻量 HTTP 客户端 (ureq)，提升无状态优化响应；完善全局设置、快捷手势与资源图标支持。
@@ -578,17 +593,34 @@
     <!-- 快速配置参考 -->
     <section class="config-section">
       <div class="section-label">Quick Config / 配置参考 (config.json)</div>
-      <div class="feature-desc" style="margin-bottom: 8px;">首次运行会在同一目录自动生成 <code
-          style="font-family: var(--font-mono); font-size: 12px;">config.json</code>，右键托盘“设置”修改配置：
+      <div class="feature-desc" style="margin-bottom: 8px;">配置存储于 EXE 同目录的 <code
+          style="font-family: var(--font-mono); font-size: 12px;">config.json</code>，右键托盘选择“设置”即可在现代化界面中快捷管理多套配置：
       </div>
       <pre class="code-block">{
-  "api_key": "YOUR_API_KEY",
-  "base_url": "https://api.openai.com/v1",
-  "model": "gpt-4o-mini",
+  "active_profile": "默认配置",
+  "api_profiles": [
+    {
+      "name": "默认配置",
+      "api_key": "YOUR_API_KEY",
+      "base_url": "https://api.openai.com/v1",
+      "models": ["gpt-4o-mini", "gpt-5-mini"],
+      "model": "gpt-4o-mini",
+      "temperature": 0.3,
+      "max_tokens": 512
+    }
+  ],
   "hotkey": "Ctrl+TripleA",
-  "temperature": 0.3,
-  "max_tokens": 512
+  "system_prompt": "你是一个提示词优化助手……只返回优化后的提示词。",
+  "result_mode": "clipboard",
+  "play_sound": true,
+  "auto_start": false
 }</pre>
+      <div class="feature-desc" style="margin-top: 8px;">
+        <code style="font-family: var(--font-mono); font-size: 12px;">models</code> 保存该配置的可用模型列表，
+        <code style="font-family: var(--font-mono); font-size: 12px;">model</code> 表示当前实际调用的模型；当前版本的
+        <code style="font-family: var(--font-mono); font-size: 12px;">result_mode</code> 固定为
+        <code style="font-family: var(--font-mono); font-size: 12px;">clipboard</code>。
+      </div>
     </section>
 
     <!-- 页脚 -->
