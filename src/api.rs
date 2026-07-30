@@ -97,15 +97,7 @@ impl ApiClient {
     }
 
     pub fn test_connection(&self, config: &Config) -> Result<(), ApiError> {
-        let mut test_config = config.clone();
-        test_config.system_prompt = "这是一次 API 连通性测试。请仅回复 OK。".into();
-        let api = test_config
-            .active_api_mut()
-            .ok_or_else(|| ApiError::InvalidConfig("当前配置不存在".into()))?;
-        api.temperature = 0.0;
-        api.max_tokens = api.max_tokens.min(16);
-        self.optimize_request(&test_config, "请回复 OK", 0)
-            .map(|_| ())
+        self.optimize_request(config, "请回复 OK", 0).map(|_| ())
     }
 
     pub fn optimize_request(
@@ -242,12 +234,18 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::sync::mpsc::{self, Receiver};
     use std::thread;
     use ureq::tls::RootCerts;
 
     fn mock_response(status: u16, body: &'static str) -> String {
+        mock_response_with_request(status, body).0
+    }
+
+    fn mock_response_with_request(status: u16, body: &'static str) -> (String, Receiver<Vec<u8>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
+        let (request_tx, request_rx) = mpsc::channel();
         thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut request = Vec::new();
@@ -280,6 +278,7 @@ mod tests {
                     break;
                 }
             }
+            let _ = request_tx.send(request);
             let reason = if status == 200 { "OK" } else { "Error" };
             write!(
                 stream,
@@ -288,7 +287,7 @@ mod tests {
             )
             .unwrap();
         });
-        format!("http://{address}/v1")
+        (format!("http://{address}/v1"), request_rx)
     }
 
     fn config_for(base_url: String) -> Config {
@@ -354,6 +353,28 @@ mod tests {
             r#"{"choices":[{"message":{"content":"OK"}}]}"#,
         ));
         assert!(ApiClient::new().test_connection(&config).is_ok());
+    }
+
+    #[test]
+    fn connection_test_preserves_the_current_model_parameters() {
+        let (base_url, request_rx) =
+            mock_response_with_request(200, r#"{"choices":[{"message":{"content":"OK"}}]}"#);
+        let mut config = config_for(base_url);
+        let api = config.active_api_mut().unwrap();
+        api.temperature = 0.7;
+        api.max_tokens = 2048;
+
+        ApiClient::new().test_connection(&config).unwrap();
+
+        let request = request_rx.recv().unwrap();
+        let body_start = request
+            .windows(4)
+            .position(|part| part == b"\r\n\r\n")
+            .unwrap()
+            + 4;
+        let body: serde_json::Value = serde_json::from_slice(&request[body_start..]).unwrap();
+        assert_eq!(body["temperature"], 0.7);
+        assert_eq!(body["max_tokens"], 2048);
     }
 
     #[test]
