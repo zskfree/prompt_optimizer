@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="390" viewBox="0 0 1200 390" role="img" aria-labelledby="title desc">
   <title id="title">PromptOptimizer</title>
-  <desc id="desc">Windows 提示词优化工具：直接读取选区，发送独立请求，并将优化结果复制到剪贴板。</desc>
+  <desc id="desc">Windows 提示词优化工具：智能读取选区，发送独立请求，并将优化结果复制到剪贴板。</desc>
   <defs>
     <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#38BDF8"/>
@@ -27,11 +27,11 @@
 
     <g transform="translate(140 164)">
       <rect width="134" height="42" rx="12" fill="#151F39" stroke="#2B3A5F"/>
-      <text x="67" y="28" text-anchor="middle" fill="#E8EEFF" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="18">Ctrl × 3A</text>
+      <text x="67" y="28" text-anchor="middle" fill="#E8EEFF" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="18">Ctrl × 2F8</text>
       <rect x="146" width="162" height="42" rx="12" fill="#151F39" stroke="#2B3A5F"/>
       <text x="227" y="28" text-anchor="middle" fill="#E8EEFF" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="18">UI Automation</text>
       <rect x="320" width="136" height="42" rx="12" fill="#151F39" stroke="#2B3A5F"/>
-      <text x="388" y="28" text-anchor="middle" fill="#E8EEFF" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="18">≈ 0.76 MiB</text>
+      <text x="388" y="28" text-anchor="middle" fill="#E8EEFF" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="18">≈ 1.1 MiB</text>
     </g>
   </g>
 

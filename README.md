@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>一款轻量、无主窗口的 Windows 提示词优化工具。</strong><br>
-  选中文字，按住 <kbd>Ctrl</kbd> 快速三击 <kbd>A</kbd>，优化结果自动进入剪贴板。
+  选中文字，按住 <kbd>Ctrl</kbd> 快速按两次 <kbd>F8</kbd>，优化结果自动进入剪贴板。
 </p>
 
 <p align="center">
@@ -13,11 +13,11 @@
 
 ## 为什么使用 PromptOptimizer
 
-PromptOptimizer 常驻系统托盘，把“选区 → 优化 → 粘贴”压缩成一次快捷操作。它不打开聊天窗口，不维护会话历史，也不会在输入侧读写剪贴板。
+PromptOptimizer 常驻系统托盘，把“选区 → 优化 → 粘贴”压缩成一次快捷操作。它不打开聊天窗口，也不维护会话历史；输入侧优先直接读取选区，仅在 UI Automation 失败时临时使用剪贴板兼容模式。
 
-- **直接读取选区**：通过 Windows UI Automation 获取当前焦点控件中的选中文字，不模拟 `Ctrl+C`。
+- **智能读取选区**：优先通过 Windows UI Automation 直接读取；失败时自动临时复制选区，读取后恢复原剪贴板，无需手动切换模式。
 - **单轮无状态请求**：每次只发送本次选区和当前优化规则，使用任务 ID 隔离连续请求。
-- **轻量常驻**：无打包式 GUI 框架、无异步运行时、无控制台窗口；Release EXE 保持在 1 MiB 以内，未打开设置窗口时后台常驻内存约 ~2 MB。
+- **轻量常驻**：无打包式 GUI 框架、无异步运行时、无控制台窗口；当前 Release EXE 约 1.1 MiB，未打开设置窗口时后台常驻内存约 ~2 MB。
 - **安静反馈**：在当前输入位置附近复用同一个小型状态框，显示“优化中…”和“已复制”。
 - **兼容服务**：调用 OpenAI 兼容的 `/chat/completions` 接口，可配置地址、模型和采样参数。
 - **内置设置 (v0.3.0)**：基于系统 WebView2 Runtime 渲染 Apple / Win11 风格设置界面，支持跟随系统深浅配色、平滑文字、自绘下拉框和胶囊 Toggle 开关；关闭窗口后会尽力清理本次设置页的临时数据目录，并统一右下角 Toast 的视觉。
@@ -63,7 +63,7 @@ cargo build --release
       "max_tokens": 512
     }
   ],
-  "hotkey": "Ctrl+TripleA",
+  "hotkey": "Ctrl+DoubleF8",
   "system_prompt": "你是提示词优化助手……只返回优化后的提示词。",
   "result_mode": "clipboard",
   "play_sound": true,
@@ -75,18 +75,18 @@ cargo build --release
 
 ### 3. 完成第一次优化
 
-1. 在支持 Windows UI Automation 文本选区的应用中选中一段提示词。
-2. 按住 <kbd>Ctrl</kbd>，在约 0.52 秒间隔内快速按三次 <kbd>A</kbd>。
+1. 在应用中选中一段提示词；Chrome 等 UI Automation 兼容性有限的应用会自动使用剪贴板兼容模式。
+2. 按住 <kbd>Ctrl</kbd>，在约 0.52 秒间隔内快速按两次 <kbd>F8</kbd>。
 3. 等待状态框从“优化中…”变为“已复制”。
 4. 按 <kbd>Ctrl</kbd> + <kbd>V</kbd> 粘贴优化结果。
 
-未完成三击时，原本的 `Ctrl+A` 会在短暂等待后正常传给当前应用。
+只按一次时，原本的 `Ctrl+F8` 会在短暂等待后正常传给当前应用。
 
 ## 工作方式
 
 ```text
 当前焦点控件的选区
-        │  Windows UI Automation
+        │  Windows UI Automation；失败时临时复制并恢复剪贴板
         ▼
 本次文本 + 配置中的优化规则
         │  独立、无状态的单轮请求
@@ -104,16 +104,17 @@ Unicode 文本写入剪贴板
 默认值为：
 
 ```json
-"hotkey": "Ctrl+TripleA"
+"hotkey": "Ctrl+DoubleF8"
 ```
 
 支持以下格式：
 
-- `Ctrl+TripleA`：按住 Ctrl，快速三击 A。
-- `Ctrl+DoubleA`：按住 Ctrl，快速双击 A，更容易误触。
+- `Ctrl+DoubleF8`：默认值；按住 Ctrl，快速按两次 F8。
+- `Ctrl+TripleF8`：按住 Ctrl，快速按三次 F8。
+- 重复按键手势：支持 `Ctrl+Double...` / `Ctrl+Triple...` 加 `A–Z`、`0–9` 或 `F1–F24`。
 - 普通组合键：修饰键 `Ctrl` / `Alt` / `Shift` / `Win` 加 `A–Z`、`0–9` 或 `F1–F24`。
 
-普通组合键必须包含至少一个修饰键；`F12` 为系统保留键，不可使用。
+普通组合键必须包含至少一个修饰键；`F12` 为系统保留键，不可使用。旧配置中的 `Ctrl+TripleA` 和 `Ctrl+DoubleA` 会在加载时自动迁移为 `Ctrl+DoubleF8`。
 
 ## 托盘菜单
 
@@ -125,10 +126,10 @@ Explorer 重启后，托盘图标会自动恢复；命名互斥量用于防止�
 
 ## 隐私与边界
 
-- 输入侧不读取、不覆盖剪贴板，也不模拟 `Ctrl+C`；输出侧只写入最终 Unicode 文本。
+- 输入侧优先不访问剪贴板；UI Automation 失败时会深拷贝可安全恢复的剪贴板数据、模拟 `Ctrl+C` 读取选区并立即恢复。兼容模式不再复用系统 OLE 剪贴板代理；遇到剪贴板占用或无法安全备份的格式时只提示本次失败，程序和快捷键会继续运行。输出侧只写入最终 Unicode 文本。
 - 仅向配置的 API 服务发送当前选中文字、系统提示词和请求参数。
 - API Key 及命名 API 配置以明文保存在本地 `config.json`，不会写入常规运行日志。
-- 部分游戏、远程桌面、自绘控件以及未公开 UI Automation 文本选区的应用无法直接读取选中文字。
+- 剪贴板管理器或 Windows 剪贴板历史可能记录兼容模式产生的临时复制；部分游戏、远程桌面和禁止复制的自绘控件仍可能无法读取选区。
 - 当前只支持 Windows 和 `result_mode = "clipboard"`；不支持流式输出。
 
 ## 开发与验证

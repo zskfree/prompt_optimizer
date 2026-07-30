@@ -8,6 +8,7 @@ use prompt_optimizer::config::{self, Config, ConfigError};
 use prompt_optimizer::hotkey::{parse_hotkey, HotkeyKind, HotkeySpec};
 use std::ffi::c_void;
 use std::fmt::{Display, Formatter};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::{
     mpsc::{self, Receiver, Sender},
@@ -105,8 +106,9 @@ struct GestureHookState {
     hook: isize,
     hwnd: isize,
     required_taps: u8,
+    virtual_key: u32,
     taps: u8,
-    a_down: bool,
+    key_down: bool,
     last_tap_time: u32,
 }
 
@@ -134,8 +136,9 @@ static GESTURE_HOOK: Mutex<GestureHookState> = Mutex::new(GestureHookState {
     hook: 0,
     hwnd: 0,
     required_taps: 0,
+    virtual_key: 0,
     taps: 0,
-    a_down: false,
+    key_down: false,
     last_tap_time: 0,
 });
 
@@ -396,6 +399,22 @@ unsafe extern "system" fn window_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    match catch_unwind(AssertUnwindSafe(|| {
+        window_proc_inner(hwnd, message, wparam, lparam)
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let pointer = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
+            if !pointer.is_null() {
+                (*pointer).busy = false;
+                (*pointer).active_task_id = None;
+            }
+            LRESULT(0)
+        }
+    }
+}
+
+unsafe fn window_proc_inner(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if message == WM_NCCREATE {
         let create = lparam.0 as *const CREATESTRUCTW;
         if !create.is_null() && !(*create).lpCreateParams.is_null() {
@@ -775,9 +794,11 @@ fn start_worker(
                     config,
                     text,
                 } => {
-                    let result = client
-                        .optimize_request(&config, &text, task_id)
-                        .map_err(|error| error.to_string());
+                    let result = recover_worker_operation(|| {
+                        client
+                            .optimize_request(&config, &text, task_id)
+                            .map_err(|error| error.to_string())
+                    });
                     if result_tx
                         .send(WorkerResult::Optimize { task_id, result })
                         .is_err()
@@ -793,9 +814,11 @@ fn start_worker(
                     settings_hwnd,
                     config,
                 } => {
-                    let result = client
-                        .test_connection(&config)
-                        .map_err(|error| error.to_string());
+                    let result = recover_worker_operation(|| {
+                        client
+                            .test_connection(&config)
+                            .map_err(|error| error.to_string())
+                    });
                     if result_tx
                         .send(WorkerResult::TestApi {
                             settings_hwnd,
@@ -816,6 +839,14 @@ fn start_worker(
     });
 }
 
+fn recover_worker_operation<Value, Operation>(operation: Operation) -> Result<Value, String>
+where
+    Operation: FnOnce() -> Result<Value, String>,
+{
+    catch_unwind(AssertUnwindSafe(operation))
+        .unwrap_or_else(|_| Err("后台任务发生异常，已恢复，可重新触发快捷键".into()))
+}
+
 fn activate_hotkey(hwnd: HWND, hotkey: &HotkeySpec) -> Result<(), WindowsError> {
     match hotkey.kind {
         HotkeyKind::Chord {
@@ -829,7 +860,9 @@ fn activate_hotkey(hwnd: HWND, hotkey: &HotkeySpec) -> Result<(), WindowsError> 
                 virtual_key,
             )
         },
-        HotkeyKind::CtrlMultiTapA { taps } => install_gesture_hook(hwnd, taps),
+        HotkeyKind::CtrlMultiTap { taps, virtual_key } => {
+            install_gesture_hook(hwnd, taps, virtual_key)
+        }
     }
 }
 
@@ -838,11 +871,15 @@ fn deactivate_hotkey(hwnd: HWND, hotkey: &HotkeySpec) {
         HotkeyKind::Chord { .. } => unsafe {
             let _ = UnregisterHotKey(Some(hwnd), HOTKEY_ID);
         },
-        HotkeyKind::CtrlMultiTapA { .. } => uninstall_gesture_hook(hwnd),
+        HotkeyKind::CtrlMultiTap { .. } => uninstall_gesture_hook(hwnd),
     }
 }
 
-fn install_gesture_hook(hwnd: HWND, required_taps: u8) -> Result<(), WindowsError> {
+fn install_gesture_hook(
+    hwnd: HWND,
+    required_taps: u8,
+    virtual_key: u32,
+) -> Result<(), WindowsError> {
     let module = HINSTANCE(unsafe { GetModuleHandleW(None) }?.0);
     let hook =
         unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), Some(module), 0) }?;
@@ -852,8 +889,9 @@ fn install_gesture_hook(hwnd: HWND, required_taps: u8) -> Result<(), WindowsErro
     state.hook = hook.0 as isize;
     state.hwnd = hwnd.0 as isize;
     state.required_taps = required_taps;
+    state.virtual_key = virtual_key;
     state.taps = 0;
-    state.a_down = false;
+    state.key_down = false;
     state.last_tap_time = 0;
     Ok(())
 }
@@ -868,8 +906,9 @@ fn uninstall_gesture_hook(hwnd: HWND) {
             hook: 0,
             hwnd: 0,
             required_taps: 0,
+            virtual_key: 0,
             taps: 0,
-            a_down: false,
+            key_down: false,
             last_tap_time: 0,
         };
         hook
@@ -895,16 +934,17 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
     let message = wparam.0 as u32;
     let key_down = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
     let key_up = message == WM_KEYUP || message == WM_SYSKEYUP;
-    let is_a = event.vkCode == b'A' as u32;
     let is_ctrl = matches!(event.vkCode, 0x11 | 0xA2 | 0xA3);
     let ctrl_down = GetAsyncKeyState(VK_CONTROL.0 as i32) < 0;
     let mut replay = 0;
+    let mut replay_key = 0;
     let mut trigger_hwnd = 0;
     let mut suppress = false;
 
     if let Ok(mut state) = GESTURE_HOOK.lock() {
-        if state.hook != 0 && is_a && key_down && ctrl_down {
-            if !state.a_down {
+        let is_target = event.vkCode == state.virtual_key;
+        if state.hook != 0 && is_target && key_down && ctrl_down {
+            if !state.key_down {
                 let (taps, expired_replay, triggered) = advance_gesture_tap(
                     state.taps,
                     state.last_tap_time,
@@ -913,7 +953,8 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
                 );
                 state.taps = taps;
                 replay = expired_replay;
-                state.a_down = true;
+                replay_key = state.virtual_key;
+                state.key_down = true;
                 state.last_tap_time = event.time;
                 let hwnd = HWND(state.hwnd as *mut c_void);
                 let _ = KillTimer(Some(hwnd), GESTURE_TIMER_ID);
@@ -924,14 +965,15 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
                 }
             }
             suppress = true;
-        } else if state.hook != 0 && is_a && key_up && state.a_down {
-            state.a_down = false;
+        } else if state.hook != 0 && is_target && key_up && state.key_down {
+            state.key_down = false;
             suppress = true;
         } else if state.hook != 0
             && state.taps > 0
             && ((is_ctrl && key_up) || (key_down && !is_ctrl))
         {
             replay = state.taps;
+            replay_key = state.virtual_key;
             state.taps = 0;
             let hwnd = HWND(state.hwnd as *mut c_void);
             let _ = KillTimer(Some(hwnd), GESTURE_TIMER_ID);
@@ -939,7 +981,7 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
     }
 
     if replay > 0 {
-        let _ = clipboard::replay_ctrl_a(replay);
+        let _ = clipboard::replay_ctrl_key(replay_key, replay);
     }
     if trigger_hwnd != 0 {
         let _ = PostMessageW(
@@ -960,15 +1002,16 @@ fn replay_pending_gesture(hwnd: HWND) {
     unsafe {
         let _ = KillTimer(Some(hwnd), GESTURE_TIMER_ID);
     }
-    let replay = if let Ok(mut state) = GESTURE_HOOK.lock() {
+    let (replay, virtual_key) = if let Ok(mut state) = GESTURE_HOOK.lock() {
         let replay = state.taps;
+        let virtual_key = state.virtual_key;
         state.taps = 0;
-        replay
+        (replay, virtual_key)
     } else {
-        0
+        (0, 0)
     };
     if replay > 0 {
-        let _ = clipboard::replay_ctrl_a(replay);
+        let _ = clipboard::replay_ctrl_key(virtual_key, replay);
     }
 }
 
@@ -1480,5 +1523,18 @@ mod status_popup_tests {
         assert!(ico_image_nearest_to(ICON_FILE, 16).is_some());
         assert!(ico_image_nearest_to(ICON_FILE, 256).is_some());
         assert!(ico_image_nearest_to(b"not-an-icon", 16).is_none());
+    }
+
+    #[test]
+    fn worker_panic_is_converted_to_a_recoverable_error() {
+        let result = recover_worker_operation(|| -> Result<(), String> {
+            panic!("simulated worker failure")
+        });
+
+        assert_eq!(
+            result,
+            Err("后台任务发生异常，已恢复，可重新触发快捷键".into())
+        );
+        assert_eq!(recover_worker_operation(|| Ok(42)), Ok(42));
     }
 }

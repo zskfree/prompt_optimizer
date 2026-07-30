@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PromptOptimizer - 轻量、无主窗口的 Windows 提示词优化工具</title>
   <meta name="description"
-    content="选中文字，按住 Ctrl 快速三击 A，优化结果自动进入剪贴板。Windows 10/11 · Rust 2021 · OpenAI-compatible API · Portable" />
+    content="选中文字，按住 Ctrl 快速按两次 F8，优化结果自动进入剪贴板。Windows 10/11 · Rust 2021 · OpenAI-compatible API · Portable" />
 
   <!-- Google tag (gtag.js) - 独立可配置统计 -->
   <script async
@@ -454,11 +454,11 @@
         <span class="hero-tag">Rust 2021</span>
         <span class="hero-tag">OpenAI-compatible API</span>
         <span class="hero-tag">RAM ~2 MB</span>
-        <span class="hero-tag">Portable (<1 MiB)</span>
+        <span class="hero-tag">Portable (≈1.1 MiB)</span>
       </div>
       <blockquote>
         <p>选中文字，一次手势，得到更清晰的提示词。</p>
-        <cite>选中目标文本后按住 <kbd>Ctrl</kbd> 快速三击 <kbd>A</kbd>，优化结果自动进入剪贴板</cite>
+        <cite>选中目标文本后按住 <kbd>Ctrl</kbd> 快速按两次 <kbd>F8</kbd>，优化结果自动进入剪贴板</cite>
       </blockquote>
     </header>
 
@@ -474,9 +474,8 @@
           </div>
         </li>
         <li class="feature-item">
-          <div class="feature-title">🎯 原生选区提取</div>
-          <div class="feature-desc">通过 Windows UI Automation
-            直接获取当前焦点控件的选中文本，无需模拟 <kbd>Ctrl+C</kbd>，不污染剪贴板历史。</div>
+          <div class="feature-title">🎯 智能选区提取</div>
+          <div class="feature-desc">优先通过 Windows UI Automation 直接读取；失败时自动临时复制选区，读取后恢复原剪贴板，无需手动切换兼容模式。</div>
         </li>
         <li class="feature-item">
           <div class="feature-title">🪶 极致轻量常驻</div>
@@ -489,7 +488,7 @@
         </li>
         <li class="feature-item">
           <div class="feature-title">🔒 无状态与隐私安全</div>
-          <div class="feature-desc">每次只发送本次选区文本与配置规则，不维护会话历史，输入侧零读写。</div>
+          <div class="feature-desc">每次只发送本次选区文本与配置规则，不维护会话历史；兼容模式只临时使用剪贴板并随后恢复。</div>
         </li>
         <li class="feature-item">
           <div class="feature-title">🌐 兼容通用 API</div>
@@ -524,10 +523,10 @@
         <div style="border: 1px solid var(--color-border); border-radius: 4px; padding: 14px; background: var(--color-surface);">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
             <span style="font-weight: 700; font-size: 14px; color: var(--color-text);">v0.3.0 <span style="font-size: 10px; font-family: var(--font-mono); background: var(--color-accent); color: var(--color-surface); padding: 2px 6px; border-radius: 3px; margin-left: 6px;">当前已发布</span></span>
-            <a href="https://github.com/zskfree/prompt_optimizer/releases/download/v0.3.0/PromptOptimizer_v0.3.0.zip" style="font-size: 12px; font-family: var(--font-mono); color: var(--color-text-muted); text-decoration: underline;" target="_blank" rel="noopener">直接下载 (557 KB)</a>
+            <a href="https://github.com/zskfree/prompt_optimizer/releases/download/v0.3.0/PromptOptimizer_v0.3.0.zip" style="font-size: 12px; font-family: var(--font-mono); color: var(--color-text-muted); text-decoration: underline;" target="_blank" rel="noopener">直接下载 (618 KB)</a>
           </div>
           <div style="font-size: 13px; color: var(--color-text-muted); line-height: 1.5;">
-            升级 WebView2 Apple / Win11 风格设置界面，支持系统深浅配色、多配置多模型选择、自绘下拉框与胶囊 Toggle；关闭设置窗口后尽力清理本次临时目录，并统一 Toast 浮窗视觉。
+            升级 WebView2 Apple / Win11 风格设置界面，支持系统深浅配色、多配置多模型选择和自动剪贴板兼容模式；修复兼容模式恢复剪贴板时的偶发崩溃，单次读取异常后程序与快捷键可继续运行。
           </div>
         </div>
 
@@ -609,7 +608,7 @@
       "max_tokens": 512
     }
   ],
-  "hotkey": "Ctrl+TripleA",
+  "hotkey": "Ctrl+DoubleF8",
   "system_prompt": "你是一个提示词优化助手……只返回优化后的提示词。",
   "result_mode": "clipboard",
   "play_sound": true,

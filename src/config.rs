@@ -36,7 +36,7 @@ impl Default for Config {
         Self {
             active_profile: DEFAULT_API_PROFILE_NAME.into(),
             api_profiles: vec![ApiProfile::default()],
-            hotkey: "Ctrl+TripleA".into(),
+            hotkey: crate::hotkey::DEFAULT_HOTKEY.into(),
             system_prompt: "你是提示词优化助手。请在不改变原意、不虚构需求的前提下，对用户的原始提示词做轻量优化：表达清楚、结构规范，删除重复、空泛和不必要的内容。使用简洁、规范的 Markdown 格式；只有确有必要时才使用标题或列表。不要扩写成完整方案，不要擅自补充大量背景、角色设定、步骤、示例或验收项。输出长度原则上不超过原文的 1.5 倍；原文较短时最多 200 个汉字。只返回优化后的提示词，不要添加解释、前后缀或 Markdown 代码围栏。".into(),
             result_mode: "clipboard".into(),
             play_sound: true,
@@ -193,10 +193,11 @@ impl Config {
         }
 
         let active_profile = profiles[active_index].name.trim().to_string();
+        let hotkey = migrate_legacy_hotkey(file.hotkey);
         Self {
             active_profile,
             api_profiles: profiles,
-            hotkey: file.hotkey,
+            hotkey,
             system_prompt: file.system_prompt,
             result_mode: file.result_mode,
             play_sound: file.play_sound,
@@ -261,6 +262,19 @@ impl Config {
 
     pub fn endpoint(&self) -> Option<String> {
         self.active_api().map(ApiProfile::endpoint)
+    }
+}
+
+fn migrate_legacy_hotkey(hotkey: String) -> String {
+    let compact = hotkey
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    if matches!(compact.as_str(), "CTRL+DOUBLEA" | "CTRL+TRIPLEA") {
+        crate::hotkey::DEFAULT_HOTKEY.into()
+    } else {
+        hotkey
     }
 }
 
@@ -460,9 +474,24 @@ mod tests {
         let config: Config = serde_json::from_str(r#"{"model":"custom"}"#).unwrap();
         assert_eq!(config.active_api().unwrap().model, "custom");
         assert_eq!(config.active_api().unwrap().models, vec!["custom"]);
-        assert_eq!(config.hotkey, "Ctrl+TripleA");
+        assert_eq!(config.hotkey, "Ctrl+DoubleF8");
         assert_eq!(config.active_profile, DEFAULT_API_PROFILE_NAME);
         assert_eq!(config.api_profiles.len(), 1);
+    }
+
+    #[test]
+    fn new_config_uses_ctrl_double_f8() {
+        assert_eq!(Config::default().hotkey, "Ctrl+DoubleF8");
+    }
+
+    #[test]
+    fn legacy_ctrl_a_gestures_migrate_to_ctrl_double_f8() {
+        for legacy in ["Ctrl+TripleA", " ctrl + doublea "] {
+            let config: Config =
+                serde_json::from_value(serde_json::json!({ "hotkey": legacy })).unwrap();
+
+            assert_eq!(config.hotkey, "Ctrl+DoubleF8");
+        }
     }
 
     #[test]
@@ -518,7 +547,7 @@ mod tests {
             config.active_api().unwrap().model,
             "deepseek-ai/DeepSeek-V4-Flash"
         );
-        assert_eq!(config.hotkey, "Ctrl+TripleA");
+        assert_eq!(config.hotkey, "Ctrl+DoubleF8");
         assert!(config.validate().is_ok());
 
         let encoded = serde_json::to_value(&config).unwrap();

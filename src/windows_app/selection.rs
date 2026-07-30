@@ -13,6 +13,7 @@ use windows::Win32::UI::Accessibility::{
 pub enum SelectionError {
     Unsupported,
     Windows(WindowsError),
+    Compatibility(WindowsError),
 }
 
 impl Display for SelectionError {
@@ -20,6 +21,7 @@ impl Display for SelectionError {
         match self {
             Self::Unsupported => formatter.write_str("当前应用不支持直接读取选中文本"),
             Self::Windows(error) => write!(formatter, "Windows UI Automation 错误：{error}"),
+            Self::Compatibility(error) => write!(formatter, "兼容模式读取选区失败：{error}"),
         }
     }
 }
@@ -49,6 +51,12 @@ impl Drop for ComGuard {
 
 pub fn read_selected_text() -> Result<Option<String>, SelectionError> {
     let _com = ComGuard::initialize()?;
+    read_with_compatibility(read_selected_text_via_uia, || {
+        super::clipboard::read_selected_text_compatibility().map_err(SelectionError::Compatibility)
+    })
+}
+
+fn read_selected_text_via_uia() -> Result<Option<String>, SelectionError> {
     let automation: IUIAutomation =
         unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }?;
     let element = unsafe { automation.GetFocusedElement() }?;
@@ -66,6 +74,20 @@ pub fn read_selected_text() -> Result<Option<String>, SelectionError> {
     };
 
     Ok(combine_selected_ranges(texts))
+}
+
+fn read_with_compatibility<Primary, Fallback>(
+    primary: Primary,
+    fallback: Fallback,
+) -> Result<Option<String>, SelectionError>
+where
+    Primary: FnOnce() -> Result<Option<String>, SelectionError>,
+    Fallback: FnOnce() -> Result<Option<String>, SelectionError>,
+{
+    match primary() {
+        Ok(text) => Ok(text),
+        Err(_) => fallback(),
+    }
 }
 
 fn selected_ranges(pattern: &IUIAutomationTextPattern) -> Result<Vec<String>, SelectionError> {
@@ -92,6 +114,7 @@ fn combine_selected_ranges(texts: Vec<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     #[test]
     fn combines_multiple_nonempty_selection_ranges() {
@@ -105,5 +128,33 @@ mod tests {
     fn rejects_empty_or_whitespace_only_selection() {
         assert_eq!(combine_selected_ranges(vec![]), None);
         assert_eq!(combine_selected_ranges(vec!["  \r\n".into()]), None);
+    }
+
+    #[test]
+    fn uia_failure_automatically_uses_compatibility_reader() {
+        let result = read_with_compatibility(
+            || Err(SelectionError::Unsupported),
+            || Ok(Some("来自兼容模式".into())),
+        )
+        .unwrap();
+
+        assert_eq!(result.as_deref(), Some("来自兼容模式"));
+    }
+
+    #[test]
+    fn uia_success_does_not_touch_compatibility_reader() {
+        let fallback_called = Cell::new(false);
+
+        let result = read_with_compatibility(
+            || Ok(Some("来自 UIA".into())),
+            || {
+                fallback_called.set(true);
+                Ok(Some("不应读取".into()))
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.as_deref(), Some("来自 UIA"));
+        assert!(!fallback_called.get());
     }
 }

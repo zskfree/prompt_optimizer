@@ -6,11 +6,12 @@ pub const MOD_CONTROL_VALUE: u32 = 0x0002;
 pub const MOD_SHIFT_VALUE: u32 = 0x0004;
 pub const MOD_WIN_VALUE: u32 = 0x0008;
 pub const MOD_NOREPEAT_VALUE: u32 = 0x4000;
+pub const DEFAULT_HOTKEY: &str = "Ctrl+DoubleF8";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HotkeyKind {
     Chord { modifiers: u32, virtual_key: u32 },
-    CtrlMultiTapA { taps: u8 },
+    CtrlMultiTap { taps: u8, virtual_key: u32 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,22 +37,15 @@ pub fn parse_hotkey(value: &str) -> Result<HotkeySpec, HotkeyError> {
         .filter(|character| !character.is_whitespace())
         .collect::<String>()
         .to_ascii_uppercase();
-    match compact.as_str() {
-        "CTRL+DOUBLEA" => {
+    for (prefix, taps, action) in [("CTRL+DOUBLE", 2, "双击"), ("CTRL+TRIPLE", 3, "三击")] {
+        if let Some(key) = compact.strip_prefix(prefix).filter(|key| !key.is_empty()) {
+            let (virtual_key, key_display) = parse_main_key(key)?;
             return Ok(HotkeySpec {
-                kind: HotkeyKind::CtrlMultiTapA { taps: 2 },
-                display: "Ctrl + 双击 A".into(),
+                kind: HotkeyKind::CtrlMultiTap { taps, virtual_key },
+                display: format!("Ctrl + {action} {key_display}"),
             });
         }
-        "CTRL+TRIPLEA" => {
-            return Ok(HotkeySpec {
-                kind: HotkeyKind::CtrlMultiTapA { taps: 3 },
-                display: "Ctrl + 三击 A".into(),
-            });
-        }
-        _ => {}
     }
-
     let tokens: Vec<String> = value
         .split('+')
         .map(|part| part.trim().to_ascii_uppercase())
@@ -149,17 +143,37 @@ mod tests {
     }
 
     #[test]
-    fn parses_ctrl_multi_tap_a_gestures() {
+    fn parses_legacy_ctrl_multi_tap_a_gestures() {
         assert_eq!(
             parse_hotkey(" Ctrl + TripleA ").unwrap(),
             HotkeySpec {
-                kind: HotkeyKind::CtrlMultiTapA { taps: 3 },
+                kind: HotkeyKind::CtrlMultiTap {
+                    taps: 3,
+                    virtual_key: b'A' as u32,
+                },
                 display: "Ctrl + 三击 A".into(),
             }
         );
         assert_eq!(
             parse_hotkey("ctrl+doublea").unwrap().kind,
-            HotkeyKind::CtrlMultiTapA { taps: 2 }
+            HotkeyKind::CtrlMultiTap {
+                taps: 2,
+                virtual_key: b'A' as u32,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_ctrl_double_f8_as_a_multi_tap_gesture() {
+        assert_eq!(
+            parse_hotkey("Ctrl+DoubleF8").unwrap(),
+            HotkeySpec {
+                kind: HotkeyKind::CtrlMultiTap {
+                    taps: 2,
+                    virtual_key: 0x77,
+                },
+                display: "Ctrl + 双击 F8".into(),
+            }
         );
     }
 
