@@ -117,8 +117,8 @@ where
     Fallback: FnOnce() -> Result<Option<String>, SelectionError>,
 {
     match primary() {
-        Ok(text) => Ok(text),
-        Err(_) => fallback(),
+        Ok(Some(text)) => Ok(Some(text)),
+        Ok(None) | Err(_) => fallback(),
     }
 }
 
@@ -171,6 +171,15 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.as_deref(), Some("来自兼容模式"));
+    }
+
+    #[test]
+    fn uia_empty_selection_automatically_uses_compatibility_reader() {
+        let result =
+            read_with_compatibility(|| Ok(None), || Ok(Some("AntiGravity 兼容模式选区".into())))
+                .unwrap();
+
+        assert_eq!(result.as_deref(), Some("AntiGravity 兼容模式选区"));
     }
 
     #[test]
