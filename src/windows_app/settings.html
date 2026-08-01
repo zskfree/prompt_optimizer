@@ -27,6 +27,27 @@
       --radius-sm: 6px;
     }
 
+    .info-banner {
+      background: var(--accent-soft);
+      border: 1px solid rgba(37, 99, 235, 0.2);
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+      color: var(--text-main);
+      font-size: 13px;
+      line-height: 1.6;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .info-banner-title {
+      font-weight: 600;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
     * {
       box-sizing: border-box;
       margin: 0;
@@ -593,36 +614,45 @@
 
           <div class="form-row">
             <div class="form-col">
-              <label class="form-label" for="api_key">API Key</label>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <label class="form-label" style="margin-bottom: 0;" for="api_key">API Key</label>
+                <div class="switch-row" style="gap: 6px;">
+                  <label class="form-sublabel" style="margin: 0; cursor: pointer;" for="show_key">显示 Key</label>
+                  <label class="switch" style="transform: scale(0.85); transform-origin: right center;">
+                    <input type="checkbox" id="show_key" aria-label="显示 API Key" onchange="toggleKeyVisibility()">
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
               <input type="password" id="api_key" placeholder="sk-..." oninput="markDirty()">
             </div>
-            <div style="display: flex; gap: 10px; align-items: flex-end;">
-              <div class="switch-row" style="gap: 8px;">
-                <label class="form-label" style="margin:0;">显示 Key</label>
-                <label class="switch">
-                  <input type="checkbox" id="show_key" aria-label="显示 API Key" onchange="toggleKeyVisibility()">
-                  <span class="slider"></span>
-                </label>
-              </div>
-              <button class="btn btn-outline-accent" id="test-api" onclick="sendAction('test_api')">测试连接</button>
+            <div class="form-col">
+              <label class="form-label" for="base_url">服务地址 (Base URL)</label>
+              <input type="text" id="base_url" placeholder="https://api.openai.com/v1" oninput="markDirty()">
             </div>
           </div>
 
           <div class="form-row">
             <div class="form-col">
-              <label class="form-label" for="base_url">服务地址 (Base URL)</label>
-              <input type="text" id="base_url" placeholder="https://api.openai.com/v1" oninput="markDirty()">
+              <label class="form-label" for="model">优化模型</label>
+              <div style="display: flex; gap: 8px;">
+                <select id="model" style="flex: 1;" onchange="markDirty()" aria-describedby="model-help"></select>
+                <button class="btn btn-outline-accent" id="test-api" onclick="sendAction('test_api')">测试优化</button>
+              </div>
             </div>
             <div class="form-col">
-              <label class="form-label" for="model">当前模型</label>
-              <select id="model" onchange="markDirty()" aria-describedby="model-help"></select>
+              <label class="form-label" for="translation_model">翻译模型</label>
+              <div style="display: flex; gap: 8px;">
+                <select id="translation_model" style="flex: 1;" onchange="markDirty()" aria-describedby="model-help"></select>
+                <button class="btn btn-outline-accent" id="test-translation-api" onclick="sendAction('test_translation_api')">测试翻译</button>
+              </div>
             </div>
           </div>
 
           <div class="form-col">
             <label class="form-label" for="models">可用模型</label>
             <textarea class="model-list-editor" id="models" placeholder="gpt-4o-mini&#10;gpt-5-mini" oninput="syncModelOptionsFromEditor(); markDirty()"></textarea>
-            <div class="form-sublabel" id="model-help">每行填写一个模型；上方“当前模型”用于选择本配置实际调用的模型。</div>
+            <div class="form-sublabel" id="model-help">每行填写一个模型；上方下拉框分别用于选择优化和翻译所调用的专有模型。</div>
           </div>
 
           <div class="form-row">
@@ -641,11 +671,46 @@
       <!-- 页面 2：优化规则 -->
       <div class="page-section" id="page-prompt">
         <div class="card">
-          <div class="card-title">系统 Prompt 预设</div>
+          <div class="card-title">提示词优化 Prompt 预设</div>
           <div class="form-col">
             <label class="form-label" for="system_prompt">系统提示词 (System Prompt)</label>
             <textarea id="system_prompt" placeholder="你是一个优秀的提示词优化助手..." oninput="markDirty()"></textarea>
-            <div class="form-sublabel" style="margin-top: 4px;">选中文字后触发优化，结果会自动写入剪贴板。</div>
+            <div class="form-sublabel" style="margin-top: 4px;">选中文字触发提示词优化时，系统向 AI 发送的基本设定指令。</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">文本翻译 Prompt 与语种设置</div>
+          <div class="form-row" style="margin-bottom: 12px;">
+            <div class="form-col">
+              <label class="form-label" for="native_language">母语 (Native Language)</label>
+              <input type="text" id="native_language" placeholder="中文" oninput="markDirty()">
+              <div class="form-sublabel">非母语文本默认翻译回该母语语言</div>
+            </div>
+            <div class="form-col">
+              <label class="form-label" for="target_language">目标翻译语言 (Target Language)</label>
+              <input type="text" id="target_language" placeholder="英语" oninput="markDirty()">
+              <div class="form-sublabel">母语文本默认译往的目标外向语言</div>
+            </div>
+          </div>
+          <div class="form-col">
+            <label class="form-label" for="translation_prompt">翻译系统提示词 (Translation System Prompt)</label>
+            <textarea id="translation_prompt" placeholder="你是一个高精度的专业双向文本翻译引擎..." style="min-height: 120px;" oninput="markDirty()"></textarea>
+            <div class="form-sublabel" style="margin-top: 4px;">
+              触发独立翻译时向 AI 发送的指导提示词；<b>重要提示：</b>自定义提示词时，建议使用 <code>{native}</code> 与 <code>{target}</code> 占位符（避免使用 XML 标签或容易产生误导的“母语/目标语言”称呼），系统在发向 AI 前会自动将它们渲染嵌入为具体的语种名称。
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">文本翻译智能判断说明</div>
+          <div class="info-banner">
+            <div class="info-banner-title">ℹ 大语言模型智能语种判断与参数协同规则</div>
+            <div>
+              • <b>智能语种判定：</b>无需手动指定源语言，由 AI 自动判定。若选区主语种为您的<b>母语 (<span id="label_native_lang">中文</span>)</b>，将准确译为<b>目标翻译语言 (<span id="label_target_lang">英语</span>)</b>；若主语种为任何非母语外文，将准确译回<b>母语 (<span id="label_native_lang2">中文</span>)</b>。<br>
+              • <b>独立翻译模型：</b>每个服务配置均可从各自模型列表中为“提示词优化”和“独立文本翻译”配置不同模型（如快速模型用于翻译，强力模型用于优化）。<br>
+              • <b>专有名词保持：</b>翻译提示词通过特殊参数强制指引 AI 完整保留如 ALPHA-731 等大写唯一代号，剪贴板无缝回填。
+            </div>
           </div>
         </div>
       </div>
@@ -653,12 +718,24 @@
       <!-- 页面 3：应用行为 -->
       <div class="page-section" id="page-behavior">
         <div class="card">
-          <div class="card-title">快捷键与开机行为</div>
-          <div class="form-col">
-            <label class="form-label" for="hotkey">全局热键</label>
-            <input type="text" id="hotkey" placeholder="Ctrl+DoubleF8" oninput="markDirty()">
-            <div class="form-sublabel">推荐 Ctrl+DoubleF8；也支持 Ctrl+TripleF8 / Ctrl+F8 / Alt+Shift+P</div>
+          <div class="card-title">全局热键设置</div>
+          <div class="form-row">
+            <div class="form-col">
+              <label class="form-label" for="hotkey">提示词优化热键</label>
+              <input type="text" id="hotkey" placeholder="Ctrl+DoubleF8" oninput="markDirty()">
+              <div class="form-sublabel">推荐 Ctrl+DoubleF8 / Ctrl+F8</div>
+            </div>
+            <div class="form-col">
+              <label class="form-label" for="translation_hotkey">文本翻译热键</label>
+              <input type="text" id="translation_hotkey" placeholder="Ctrl+DoubleF9" oninput="markDirty()">
+              <div class="form-sublabel">推荐 Ctrl+DoubleF9；与优化热键禁止冲突</div>
+            </div>
           </div>
+        </div>
+
+
+        <div class="card">
+          <div class="card-title">系统与声音行为</div>
 
           <div class="switch-row" style="padding-top: 8px;">
             <div>
@@ -747,27 +824,47 @@
       return models;
     }
 
-    function renderModelOptions(models, selectedModel) {
+    function renderModelOptions(models, selectedModel, selectedTranslationModel) {
       const select = document.getElementById('model');
+      const transSelect = document.getElementById('translation_model');
       const normalized = normalizeModelNames(models);
       select.innerHTML = '';
+      if (transSelect) transSelect.innerHTML = '';
       normalized.forEach(model => {
         const option = document.createElement('option');
         option.value = model;
         option.innerText = model;
         select.appendChild(option);
+
+        if (transSelect) {
+          const transOption = document.createElement('option');
+          transOption.value = model;
+          transOption.innerText = model;
+          transSelect.appendChild(transOption);
+        }
       });
       if (normalized.includes(selectedModel)) {
         select.value = selectedModel;
       } else if (normalized.length > 0) {
         select.value = normalized[0];
       }
+
+      if (transSelect) {
+        if (normalized.includes(selectedTranslationModel)) {
+          transSelect.value = selectedTranslationModel;
+        } else if (normalized.includes(selectedModel)) {
+          transSelect.value = selectedModel;
+        } else if (normalized.length > 0) {
+          transSelect.value = normalized[0];
+        }
+      }
     }
 
     function syncModelOptionsFromEditor() {
       const selectedModel = document.getElementById('model').value;
+      const selectedTranslationModel = document.getElementById('translation_model') ? document.getElementById('translation_model').value : '';
       const models = document.getElementById('models').value.split(/\r?\n/);
-      renderModelOptions(models, selectedModel);
+      renderModelOptions(models, selectedModel, selectedTranslationModel);
     }
 
     function markDirty() {
@@ -776,7 +873,11 @@
       document.getElementById('status-text').innerText = '配置已修改（未保存）';
     }
 
+    let activeTestingTarget = null;
+
     function sendAction(action, extra = {}) {
+      if (action === 'test_api') activeTestingTarget = 'api';
+      if (action === 'test_translation_api') activeTestingTarget = 'translation';
       const payload = {
         action,
         data: collectFormData(),
@@ -796,10 +897,15 @@
         base_url: document.getElementById('base_url').value,
         models: normalizeModelNames(document.getElementById('models').value.split(/\r?\n/)),
         model: document.getElementById('model').value,
+        translation_model: document.getElementById('translation_model') ? document.getElementById('translation_model').value : '',
         temperature: document.getElementById('temperature').value,
         max_tokens: document.getElementById('max_tokens').value,
         system_prompt: document.getElementById('system_prompt').value,
+        translation_prompt: document.getElementById('translation_prompt') ? document.getElementById('translation_prompt').value : '',
         hotkey: document.getElementById('hotkey').value,
+        translation_hotkey: document.getElementById('translation_hotkey') ? document.getElementById('translation_hotkey').value : '',
+        native_language: document.getElementById('native_language') ? document.getElementById('native_language').value : '',
+        target_language: document.getElementById('target_language') ? document.getElementById('target_language').value : '',
         play_sound: document.getElementById('play_sound').checked,
         auto_start: document.getElementById('auto_start').checked
       };
@@ -833,7 +939,7 @@
             : [data.current_profile.model]
         );
         document.getElementById('models').value = models.join('\n');
-        renderModelOptions(models, data.current_profile.model || '');
+        renderModelOptions(models, data.current_profile.model || '', data.current_profile.translation_model || '');
         document.getElementById('temperature').value = data.current_profile.temperature ?? '0.3';
         document.getElementById('max_tokens').value = data.current_profile.max_tokens ?? '512';
       }
@@ -844,7 +950,25 @@
       applyProfileState(data);
 
       if (data.system_prompt !== undefined) document.getElementById('system_prompt').value = data.system_prompt;
+      if (data.translation_prompt !== undefined && document.getElementById('translation_prompt')) {
+        document.getElementById('translation_prompt').value = data.translation_prompt;
+      }
       if (data.hotkey !== undefined) document.getElementById('hotkey').value = data.hotkey;
+      if (data.translation_hotkey !== undefined && document.getElementById('translation_hotkey')) {
+        document.getElementById('translation_hotkey').value = data.translation_hotkey;
+      }
+      if (data.native_language !== undefined && document.getElementById('native_language')) {
+        document.getElementById('native_language').value = data.native_language;
+        const lbl = document.getElementById('label_native_lang');
+        const lbl2 = document.getElementById('label_native_lang2');
+        if (lbl) lbl.innerText = data.native_language;
+        if (lbl2) lbl2.innerText = data.native_language;
+      }
+      if (data.target_language !== undefined && document.getElementById('target_language')) {
+        document.getElementById('target_language').value = data.target_language;
+        const lbl = document.getElementById('label_target_lang');
+        if (lbl) lbl.innerText = data.target_language;
+      }
       if (data.play_sound !== undefined) document.getElementById('play_sound').checked = data.play_sound;
       if (data.auto_start !== undefined) document.getElementById('auto_start').checked = data.auto_start;
 
@@ -864,9 +988,23 @@
       badge.innerText = status;
       badge.title = status;
       badge.className = 'status-badge ' + (isError ? 'error' : (isSuccess ? 'success' : ''));
+
+      if (!isTesting) {
+        activeTestingTarget = null;
+      }
+      const isTransTest = activeTestingTarget === 'translation' || (isTesting && status && status.indexOf('翻译') !== -1);
+      const isApiTest = activeTestingTarget === 'api' || (isTesting && !isTransTest);
+
       const testButton = document.getElementById('test-api');
-      testButton.disabled = Boolean(isTesting);
-      testButton.innerText = isTesting ? '测试中…' : '测试连接';
+      if (testButton) {
+        testButton.disabled = Boolean(isTesting);
+        testButton.innerText = (isTesting && isApiTest) ? '测试中…' : '测试优化';
+      }
+      const testTransButton = document.getElementById('test-translation-api');
+      if (testTransButton) {
+        testTransButton.disabled = Boolean(isTesting);
+        testTransButton.innerText = (isTesting && isTransTest) ? '测试中…' : '测试翻译';
+      }
     };
 
     document.addEventListener('DOMContentLoaded', () => {

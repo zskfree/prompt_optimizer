@@ -28,6 +28,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 pub const WM_APPLY_CONFIG: u32 = WM_APP + 20;
 pub const WM_SETTINGS_CLOSED: u32 = WM_APP + 21;
 pub const WM_TEST_API: u32 = WM_APP + 22;
+pub const WM_TEST_TRANSLATION_API: u32 = WM_APP + 23;
 
 const CLASS_NAME: PCWSTR = w!("PromptOptimizer.SettingsWindow");
 const TITLE: PCWSTR = w!("PromptOptimizer 设置");
@@ -66,10 +67,15 @@ struct WebFormData {
     base_url: String,
     models: Vec<String>,
     model: String,
+    translation_model: String,
     temperature: String,
     max_tokens: String,
     system_prompt: String,
+    translation_prompt: String,
     hotkey: String,
+    translation_hotkey: String,
+    native_language: String,
+    target_language: String,
     play_sound: bool,
     auto_start: bool,
 }
@@ -109,12 +115,18 @@ fn stage_active_profile(
     if models.is_empty() && !selected_model.is_empty() {
         models.push(selected_model.clone());
     }
+    let selected_translation_model = if form.translation_model.trim().is_empty() {
+        selected_model.clone()
+    } else {
+        form.translation_model.trim().to_string()
+    };
     let profile = ApiProfile {
         name: form.profile_name.trim().to_string(),
         api_key: form.api_key.clone(),
         base_url: form.base_url.trim().to_string(),
         models,
         model: selected_model,
+        translation_model: selected_translation_model,
         temperature,
         max_tokens,
     };
@@ -144,7 +156,31 @@ fn config_from_form(
     config.active_profile = active_profile.to_string();
     stage_active_profile(&mut config.api_profiles, &mut config.active_profile, form)?;
     config.system_prompt = form.system_prompt.clone();
+    let trans_prompt = form.translation_prompt.trim();
+    config.translation_prompt = if trans_prompt.is_empty() {
+        current.translation_prompt.clone()
+    } else {
+        form.translation_prompt.clone()
+    };
     config.hotkey = form.hotkey.trim().to_string();
+    let trans_hotkey = form.translation_hotkey.trim();
+    config.translation_hotkey = if trans_hotkey.is_empty() {
+        current.translation_hotkey.clone()
+    } else {
+        trans_hotkey.to_string()
+    };
+    let native_lang = form.native_language.trim();
+    config.native_language = if native_lang.is_empty() {
+        current.native_language.clone()
+    } else {
+        native_lang.to_string()
+    };
+    let target_lang = form.target_language.trim();
+    config.target_language = if target_lang.is_empty() {
+        current.target_language.clone()
+    } else {
+        target_lang.to_string()
+    };
     config.play_sound = form.play_sound;
     config.auto_start = form.auto_start;
     config.validate().map_err(|error| error.to_string())?;
@@ -275,6 +311,18 @@ pub unsafe fn complete_api_test(hwnd: HWND, result: Result<(), String>) {
     let state = &mut *pointer;
     match result {
         Ok(()) => send_status_to_web(state, "API 连接正常", false, true, false),
+        Err(error) => send_status_to_web(state, &error, true, false, false),
+    }
+}
+
+pub unsafe fn complete_translation_api_test(hwnd: HWND, result: Result<(), String>) {
+    let pointer = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut SettingsState;
+    if pointer.is_null() {
+        return;
+    }
+    let state = &mut *pointer;
+    match result {
+        Ok(()) => send_status_to_web(state, "翻译 API 连接正常", false, true, false),
         Err(error) => send_status_to_web(state, &error, true, false, false),
     }
 }
@@ -608,6 +656,9 @@ fn handle_web_message(hwnd: HWND, json_str: &str) {
         "test_api" => {
             test_api_from_web(hwnd, state, &val["data"]);
         }
+        "test_translation_api" => {
+            test_translation_api_from_web(hwnd, state, &val["data"]);
+        }
         _ => {}
     }
 }
@@ -699,6 +750,46 @@ fn test_api_from_web(hwnd: HWND, state: &mut SettingsState, data: &serde_json::V
     }
 }
 
+fn test_translation_api_from_web(hwnd: HWND, state: &mut SettingsState, data: &serde_json::Value) {
+    let form = match parse_form_data(data) {
+        Ok(form) => form,
+        Err(error) => {
+            send_status_to_web(state, &error, true, false, false);
+            return;
+        }
+    };
+    let config = match config_from_form(
+        &state.current,
+        &state.draft_profiles,
+        &state.draft_active_profile,
+        &form,
+    ) {
+        Ok(config) => config,
+        Err(error) => {
+            send_status_to_web(state, &error, true, false, false);
+            return;
+        }
+    };
+
+    send_status_to_web(state, "正在测试翻译 API 连接...", false, false, true);
+    let mut request = ApiTestRequest {
+        config,
+        error: None,
+    };
+    let result = unsafe {
+        SendMessageW(
+            state.owner,
+            WM_TEST_TRANSLATION_API,
+            Some(WPARAM(hwnd.0 as usize)),
+            Some(LPARAM((&mut request as *mut ApiTestRequest) as isize)),
+        )
+    };
+    if result.0 != 1 {
+        let message = request.error.as_deref().unwrap_or("翻译 API 测试未能启动");
+        send_status_to_web(state, message, true, false, false);
+    }
+}
+
 fn send_state_to_web(
     state: &SettingsState,
     status: Option<&str>,
@@ -720,7 +811,11 @@ fn send_state_to_web(
         "active_profile": state.draft_active_profile,
         "current_profile": current_p,
         "system_prompt": state.current.system_prompt,
+        "translation_prompt": state.current.translation_prompt,
         "hotkey": state.current.hotkey,
+        "translation_hotkey": state.current.translation_hotkey,
+        "native_language": state.current.native_language,
+        "target_language": state.current.target_language,
         "play_sound": state.current.play_sound,
         "auto_start": state.current.auto_start,
         "status": status.unwrap_or("所有修改统一点击“保存并应用”"),
@@ -838,6 +933,7 @@ mod tests {
             hotkey: current.hotkey.clone(),
             play_sound: current.play_sound,
             auto_start: current.auto_start,
+            ..WebFormData::default()
         };
 
         let config = config_from_form(

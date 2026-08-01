@@ -125,6 +125,40 @@ fn parse_main_key(token: &str) -> Result<(u32, String), HotkeyError> {
     Err(HotkeyError(format!("不支持的主键：{token}")))
 }
 
+pub fn check_hotkey_conflict(a: &HotkeySpec, b: &HotkeySpec) -> Result<(), HotkeyError> {
+    if a == b {
+        return Err(HotkeyError("优化与翻译快捷键不能相同".into()));
+    }
+    let vk_a = match a.kind {
+        HotkeyKind::Chord { virtual_key, .. } | HotkeyKind::CtrlMultiTap { virtual_key, .. } => {
+            virtual_key
+        }
+    };
+    let vk_b = match b.kind {
+        HotkeyKind::Chord { virtual_key, .. } | HotkeyKind::CtrlMultiTap { virtual_key, .. } => {
+            virtual_key
+        }
+    };
+    if vk_a == vk_b {
+        let is_multi_a = matches!(a.kind, HotkeyKind::CtrlMultiTap { .. });
+        let is_multi_b = matches!(b.kind, HotkeyKind::CtrlMultiTap { .. });
+        if is_multi_a && is_multi_b {
+            return Err(HotkeyError("同一按键不能重复设置多击手势".into()));
+        }
+        if is_multi_a || is_multi_b {
+            let chord = if is_multi_a { &b.kind } else { &a.kind };
+            if let HotkeyKind::Chord { modifiers, .. } = chord {
+                if *modifiers & MOD_CONTROL_VALUE != 0 {
+                    return Err(HotkeyError(
+                        "Ctrl 组合键与 Ctrl 多击手势不能使用相同的按键".into(),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,5 +242,20 @@ mod tests {
         ] {
             assert!(parse_hotkey(value).is_err(), "{value} should be invalid");
         }
+    }
+
+    #[test]
+    fn rejects_conflicting_hotkeys() {
+        let double_f8 = parse_hotkey("Ctrl+DoubleF8").unwrap();
+        let triple_f8 = parse_hotkey("Ctrl+TripleF8").unwrap();
+        let ctrl_f8 = parse_hotkey("Ctrl+F8").unwrap();
+        let double_f9 = parse_hotkey("Ctrl+DoubleF9").unwrap();
+        let alt_f8 = parse_hotkey("Alt+F8").unwrap();
+
+        assert!(check_hotkey_conflict(&double_f8, &double_f8).is_err());
+        assert!(check_hotkey_conflict(&double_f8, &triple_f8).is_err());
+        assert!(check_hotkey_conflict(&double_f8, &ctrl_f8).is_err());
+        assert!(check_hotkey_conflict(&double_f8, &double_f9).is_ok());
+        assert!(check_hotkey_conflict(&double_f8, &alt_f8).is_ok());
     }
 }

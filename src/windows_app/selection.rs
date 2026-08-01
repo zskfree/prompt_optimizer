@@ -1,9 +1,36 @@
 use std::fmt::{Display, Formatter};
+use std::sync::Mutex;
 use windows::core::Error as WindowsError;
+use windows::Win32::Foundation::RECT;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
     COINIT_APARTMENTTHREADED,
 };
+
+static LAST_SELECTION_RECT: Mutex<Option<RECT>> = Mutex::new(None);
+
+pub fn take_selection_rect() -> Option<RECT> {
+    LAST_SELECTION_RECT
+        .lock()
+        .ok()
+        .and_then(|mut rect| rect.take())
+}
+
+fn clear_selection_rect() {
+    if let Ok(mut rect) = LAST_SELECTION_RECT.lock() {
+        *rect = None;
+    }
+}
+
+fn remember_selection_rect(rect: RECT) {
+    let width = rect.right - rect.left;
+    let height = rect.bottom - rect.top;
+    if width > 0 && height > 0 && width <= 800 && height <= 400 {
+        if let Ok(mut last) = LAST_SELECTION_RECT.lock() {
+            *last = Some(rect);
+        }
+    }
+}
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationTextPattern, IUIAutomationTextPattern2,
     UIA_TextPattern2Id, UIA_TextPatternId,
@@ -50,6 +77,7 @@ impl Drop for ComGuard {
 }
 
 pub fn read_selected_text() -> Result<Option<String>, SelectionError> {
+    clear_selection_rect();
     let _com = ComGuard::initialize()?;
     read_with_compatibility(read_selected_text_via_uia, || {
         super::clipboard::read_selected_text_compatibility().map_err(SelectionError::Compatibility)
@@ -60,6 +88,10 @@ fn read_selected_text_via_uia() -> Result<Option<String>, SelectionError> {
     let automation: IUIAutomation =
         unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }?;
     let element = unsafe { automation.GetFocusedElement() }?;
+
+    if let Ok(rect) = unsafe { element.CurrentBoundingRectangle() } {
+        remember_selection_rect(rect);
+    }
 
     let texts = if let Ok(pattern) =
         unsafe { element.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId) }
@@ -156,5 +188,34 @@ mod tests {
 
         assert_eq!(result.as_deref(), Some("来自 UIA"));
         assert!(!fallback_called.get());
+    }
+
+    #[test]
+    fn selection_rect_is_consumed_once_and_rejects_implausible_bounds() {
+        clear_selection_rect();
+        remember_selection_rect(RECT {
+            left: 100,
+            top: 200,
+            right: 500,
+            bottom: 260,
+        });
+        assert_eq!(
+            take_selection_rect(),
+            Some(RECT {
+                left: 100,
+                top: 200,
+                right: 500,
+                bottom: 260,
+            })
+        );
+        assert_eq!(take_selection_rect(), None);
+
+        remember_selection_rect(RECT {
+            left: 0,
+            top: 0,
+            right: 1600,
+            bottom: 900,
+        });
+        assert_eq!(take_selection_rect(), None);
     }
 }

@@ -457,8 +457,8 @@
         <span class="hero-tag">Portable (≈1.1 MiB)</span>
       </div>
       <blockquote>
-        <p>选中文字，一次手势，得到更清晰的提示词。</p>
-        <cite>选中目标文本后按住 <kbd>Ctrl</kbd> 快速按两次 <kbd>F8</kbd>，优化结果自动进入剪贴板</cite>
+        <p>选中文字，一次手势，优化提示词或智能翻译。</p>
+        <cite>按住 <kbd>Ctrl</kbd> 快速按两次 <kbd>F8</kbd> 优化，或按两次 <kbd>F9</kbd> 翻译，结果自动进入剪贴板</cite>
       </blockquote>
     </header>
 
@@ -475,7 +475,11 @@
         </li>
         <li class="feature-item">
           <div class="feature-title">🎯 智能选区提取</div>
-          <div class="feature-desc">优先通过 Windows UI Automation 直接读取；失败时自动临时复制选区，读取后恢复原剪贴板，无需手动切换兼容模式。</div>
+          <div class="feature-desc">优先通过 Windows UI Automation 直接读取并在选区附近显示状态；失败时自动临时复制选区，读取后恢复原剪贴板。</div>
+        </li>
+        <li class="feature-item">
+          <div class="feature-title">🌏 智能双向翻译 (v0.4.0)</div>
+          <div class="feature-desc">使用独立的 <kbd>Ctrl</kbd> + 双击 <kbd>F9</kbd> 手势，根据母语与目标语言自动决定翻译方向；每套 API 配置可为优化和翻译分别选择模型。</div>
         </li>
         <li class="feature-item">
           <div class="feature-title">🪶 极致轻量常驻</div>
@@ -494,7 +498,7 @@
           <div class="feature-title">🌐 兼容通用 API</div>
           <div class="feature-desc">支持任意 OpenAI 兼容的 <code
               style="font-family: var(--font-mono); font-size: 12px;">/chat/completions</code>
-            接口；每套服务配置可保存多个模型，并选择当前调用模型。</div>
+            接口；每套服务配置可保存多个模型，并分别选择优化模型与翻译模型。</div>
         </li>
       </ul>
     </section>
@@ -505,7 +509,7 @@
     <section class="action-section">
       <div class="section-label">Downloads & Resources / 下载与资源</div>
 
-      <a href="https://github.com/zskfree/prompt_optimizer/releases/download/v0.3.0/PromptOptimizer_v0.3.0.zip"
+      <a href="https://github.com/zskfree/prompt_optimizer/releases/download/v0.4.0/PromptOptimizer_v0.4.0.zip"
         class="btn-primary" target="_blank" rel="noopener">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" stroke-width="2" stroke-linecap="round"
@@ -514,15 +518,26 @@
           <polyline points="7 10 12 15 17 10"></polyline>
           <line x1="12" y1="15" x2="12" y2="3"></line>
         </svg>
-        下载当前已发布版本 v0.3.0 (PromptOptimizer_v0.3.0.zip)
+        下载当前版本 v0.4.0 (PromptOptimizer_v0.4.0.zip)
       </a>
 
       <!-- 版本明细与下载选择 -->
       <div style="margin-top: var(--space-md); display: flex; flex-direction: column; gap: var(--space-xs);">
-        <!-- v0.3.0 卡片 -->
+        <!-- v0.4.0 卡片 -->
         <div style="border: 1px solid var(--color-border); border-radius: 4px; padding: 14px; background: var(--color-surface);">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-            <span style="font-weight: 700; font-size: 14px; color: var(--color-text);">v0.3.0 <span style="font-size: 10px; font-family: var(--font-mono); background: var(--color-accent); color: var(--color-surface); padding: 2px 6px; border-radius: 3px; margin-left: 6px;">当前已发布</span></span>
+            <span style="font-weight: 700; font-size: 14px; color: var(--color-text);">v0.4.0 <span style="font-size: 10px; font-family: var(--font-mono); background: var(--color-accent); color: var(--color-surface); padding: 2px 6px; border-radius: 3px; margin-left: 6px;">当前版本</span></span>
+            <a href="https://github.com/zskfree/prompt_optimizer/releases/download/v0.4.0/PromptOptimizer_v0.4.0.zip" style="font-size: 12px; font-family: var(--font-mono); color: var(--color-text-muted); text-decoration: underline;" target="_blank" rel="noopener">直接下载</a>
+          </div>
+          <div style="font-size: 13px; color: var(--color-text-muted); line-height: 1.5;">
+            新增母语与目标语言间的智能双向翻译、独立翻译模型和翻译连通性测试；两组多击热键具备冲突校验与有序回放，状态提示优先锚定当前选区。
+          </div>
+        </div>
+
+        <!-- v0.3.0 卡片 -->
+        <div style="border: 1px solid var(--color-border); border-radius: 4px; padding: 14px; background: var(--color-surface); opacity: 0.85;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <span style="font-weight: 600; font-size: 14px; color: var(--color-text-muted);">v0.3.0 <span style="font-size: 10px; font-family: var(--font-mono); color: var(--color-text-subtle); margin-left: 4px;">历史版本</span></span>
             <a href="https://github.com/zskfree/prompt_optimizer/releases/download/v0.3.0/PromptOptimizer_v0.3.0.zip" style="font-size: 12px; font-family: var(--font-mono); color: var(--color-text-muted); text-decoration: underline;" target="_blank" rel="noopener">直接下载 (617 KB)</a>
           </div>
           <div style="font-size: 13px; color: var(--color-text-muted); line-height: 1.5;">
@@ -604,19 +619,25 @@
       "base_url": "https://api.openai.com/v1",
       "models": ["gpt-4o-mini", "gpt-5-mini"],
       "model": "gpt-4o-mini",
+      "translation_model": "gpt-4o-mini",
       "temperature": 0.3,
       "max_tokens": 512
     }
   ],
   "hotkey": "Ctrl+DoubleF8",
+  "translation_hotkey": "Ctrl+DoubleF9",
+  "native_language": "中文",
+  "target_language": "英语",
   "system_prompt": "你是一个提示词优化助手……只返回优化后的提示词。",
+  "translation_prompt": "你是一个高精度的专业双向文本翻译引擎……",
   "result_mode": "clipboard",
   "play_sound": true,
   "auto_start": false
 }</pre>
       <div class="feature-desc" style="margin-top: 8px;">
         <code style="font-family: var(--font-mono); font-size: 12px;">models</code> 保存该配置的可用模型列表，
-        <code style="font-family: var(--font-mono); font-size: 12px;">model</code> 表示当前实际调用的模型；当前版本的
+        <code style="font-family: var(--font-mono); font-size: 12px;">model</code> 与
+        <code style="font-family: var(--font-mono); font-size: 12px;">translation_model</code> 分别表示优化和翻译实际调用的模型；当前版本的
         <code style="font-family: var(--font-mono); font-size: 12px;">result_mode</code> 固定为
         <code style="font-family: var(--font-mono); font-size: 12px;">clipboard</code>。
       </div>

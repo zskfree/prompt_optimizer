@@ -96,8 +96,16 @@ impl ApiClient {
         self.optimize_request(config, text, 0)
     }
 
+    pub fn translate(&self, config: &Config, text: &str) -> Result<String, ApiError> {
+        self.translate_request(config, text, 0)
+    }
+
     pub fn test_connection(&self, config: &Config) -> Result<(), ApiError> {
         self.optimize_request(config, "请回复 OK", 0).map(|_| ())
+    }
+
+    pub fn test_translation_connection(&self, config: &Config) -> Result<(), ApiError> {
+        self.translate_request(config, "请回复 OK", 0).map(|_| ())
     }
 
     pub fn optimize_request(
@@ -106,11 +114,39 @@ impl ApiClient {
         text: &str,
         request_id: u64,
     ) -> Result<String, ApiError> {
+        self.execute_chat_request(config, request_id, |cfg, api| build_request(cfg, api, text))
+    }
+
+    pub fn translate_request(
+        &self,
+        config: &Config,
+        text: &str,
+        request_id: u64,
+    ) -> Result<String, ApiError> {
+        self.execute_chat_request(config, request_id, |cfg, api| {
+            build_translate_request(cfg, api, text)
+        })
+    }
+
+    fn execute_chat_request(
+        &self,
+        config: &Config,
+        request_id: u64,
+        build_fn: impl for<'a> FnOnce(&'a Config, &'a ApiProfile) -> ChatRequest<'a>,
+    ) -> Result<String, ApiError> {
         let api = config
             .active_api()
             .ok_or_else(|| ApiError::InvalidConfig("当前配置不存在".into()))?;
-        let request = build_request(config, api, text);
+        let request = build_fn(config, api);
+        self.send_chat_request(api, &request, request_id)
+    }
 
+    fn send_chat_request(
+        &self,
+        api: &ApiProfile,
+        request: &ChatRequest<'_>,
+        request_id: u64,
+    ) -> Result<String, ApiError> {
         let mut response = self
             .agent
             .post(&api.endpoint())
@@ -118,7 +154,7 @@ impl ApiClient {
             .header("Content-Type", "application/json")
             .header("Cache-Control", "no-store")
             .header("X-PromptOptimizer-Request-Id", &request_id.to_string())
-            .send_json(&request)
+            .send_json(request)
             .map_err(|error| ApiError::Network(sanitize(&error.to_string())))?;
 
         let status = response.status().as_u16();
@@ -153,27 +189,73 @@ impl ApiClient {
     }
 }
 
-fn build_request<'a>(config: &'a Config, api: &'a ApiProfile, text: &str) -> ChatRequest<'a> {
+fn build_chat_request<'a>(
+    model: &'a str,
+    system_content: String,
+    user_content: String,
+    temperature: f64,
+    max_tokens: u32,
+) -> ChatRequest<'a> {
     ChatRequest {
-        model: api.model.trim(),
+        model,
         messages: [
             ChatMessage {
                 role: "system",
-                content: STATELESS_GUARD.into(),
+                content: system_content,
             },
             ChatMessage {
                 role: "user",
-                content: format!(
-                    "<optimization_rules>\n{}\n</optimization_rules>\n<original_prompt>\n{}\n</original_prompt>",
-                    config.system_prompt.trim(),
-                    text
-                ),
+                content: user_content,
             },
         ],
-        temperature: api.temperature,
-        max_tokens: api.max_tokens,
+        temperature,
+        max_tokens,
         stream: false,
     }
+}
+
+fn build_request<'a>(config: &'a Config, api: &'a ApiProfile, text: &str) -> ChatRequest<'a> {
+    let user_content = format!(
+        "<optimization_rules>\n{}\n</optimization_rules>\n<original_prompt>\n{}\n</original_prompt>",
+        config.system_prompt.trim(),
+        text
+    );
+    build_chat_request(
+        api.model.trim(),
+        STATELESS_GUARD.into(),
+        user_content,
+        api.temperature,
+        api.max_tokens,
+    )
+}
+
+fn build_translate_request<'a>(
+    config: &'a Config,
+    api: &'a ApiProfile,
+    text: &str,
+) -> ChatRequest<'a> {
+    let native = config.native_language.trim();
+    let target = config.target_language.trim();
+    let system_content = config
+        .translation_prompt
+        .replace("{native}", native)
+        .replace("{target}", target)
+        .replace("<native_language>", native)
+        .replace("<target_language>", target);
+
+    let user_content = format!(
+        "双向翻译方向执行令（最高优先级）：\n- 如果待处理文段是{native}，请准确翻译为{target}。\n- 如果待处理文段是除{native}以外的任何外文，必须准确翻译为{native}，严禁翻译为{target}。\n\n<original_text>\n{text}\n</original_text>",
+        native = native,
+        target = target,
+        text = text
+    );
+    build_chat_request(
+        api.translation_model.trim(),
+        system_content.trim().into(),
+        user_content,
+        api.temperature,
+        api.max_tokens,
+    )
 }
 
 impl Default for ApiClient {
@@ -339,6 +421,7 @@ mod tests {
         let api = config.active_api_mut().unwrap();
         api.models = vec!["model-a".into(), "model-b".into()];
         api.model = "model-b".into();
+        api.translation_model = "model-b".into();
         let api = config.active_api().unwrap();
 
         let request = serde_json::to_value(build_request(&config, api, "input")).unwrap();
@@ -490,6 +573,52 @@ mod tests {
             ApiError::Network("Timeout(Global)".into()).to_string(),
             "请求超时，请稍后重试"
         );
+    }
+
+    #[test]
+    fn builds_translate_request_with_correct_model_and_tags() {
+        let config = Config {
+            native_language: "中文".into(),
+            target_language: "英语".into(),
+            ..Default::default()
+        };
+        let api = ApiProfile {
+            translation_model: "trans-model-pro".into(),
+            ..Default::default()
+        };
+
+        let request = build_translate_request(&config, &api, "这是一段中文测试");
+        assert_eq!(request.model, "trans-model-pro");
+        assert_eq!(request.messages[0].role, "system");
+        assert!(request.messages[0].content.contains("主体语种为中文"));
+        assert!(request.messages[0].content.contains("翻译为英语"));
+        assert_eq!(request.messages[1].role, "user");
+        assert!(request.messages[1].content.contains("待处理文段是中文"));
+        assert!(request.messages[1].content.contains("严禁翻译为英语"));
+        assert!(request.messages[1]
+            .content
+            .contains("<original_text>\n这是一段中文测试\n</original_text>"));
+    }
+
+    #[test]
+    fn translates_text_and_tests_translation_connection() {
+        let config_translate = config_for(mock_response(
+            200,
+            r#"{"choices":[{"message":{"content":"Hello World"}}]}"#,
+        ));
+        assert_eq!(
+            ApiClient::new()
+                .translate(&config_translate, "你好世界")
+                .unwrap(),
+            "Hello World"
+        );
+        let config_test = config_for(mock_response(
+            200,
+            r#"{"choices":[{"message":{"content":"Hello World"}}]}"#,
+        ));
+        assert!(ApiClient::new()
+            .test_translation_connection(&config_test)
+            .is_ok());
     }
 
     #[test]
